@@ -204,6 +204,7 @@ Parameters::Parameters():
         PARAM_DB_TYPE(PARAM_DB_TYPE_ID, "--dbtype", "Database type", "Database type 0: auto, 1: amino acid 2: nucleotides", typeid(int), (void *) &dbType, "[0-2]{1}"),
         PARAM_CREATEDB_MODE(PARAM_CREATEDB_MODE_ID, "--createdb-mode", "Createdb mode", "Createdb mode 0: copy data, 1: soft link data and write new index (works only with single line fasta/q) 2: GPU compatible db", typeid(int), (void *) &createdbMode, "^[0-2]{1}$"),
         PARAM_SHUFFLE(PARAM_SHUFFLE_ID, "--shuffle", "Shuffle input database", "Shuffle input database", typeid(bool), (void *) &shuffleDatabase, ""),
+        PARAM_AASTORE(PARAM_AASTORE_ID, "--aastore", "Use AAStore", "Automatically build and use AAStore sequence storage (amino-acid databases only)", typeid(bool), (void *) &aastore, ""),
         PARAM_WRITE_LOOKUP(PARAM_WRITE_LOOKUP_ID, "--write-lookup", "Write lookup file", "write .lookup file containing mapping from internal id, fasta id and file number", typeid(int), (void *) &writeLookup, "^[0-1]{1}", MMseqsParameter::COMMAND_EXPERT),
         PARAM_USE_HEADER_FILE(PARAM_USE_HEADER_FILE_ID, "--use-header-file", "Use header DB", "use the sequence header DB instead of the body to map the entry keys", typeid(bool), (void *) &useHeaderFile, ""),
         // setextendeddbtype
@@ -843,6 +844,7 @@ Parameters::Parameters():
     // create db
     createdb.push_back(&PARAM_DB_TYPE);
     createdb.push_back(&PARAM_SHUFFLE);
+    createdb.push_back(&PARAM_AASTORE);
     createdb.push_back(&PARAM_CREATEDB_MODE);
     createdb.push_back(&PARAM_WRITE_LOOKUP);
     createdb.push_back(&PARAM_ID_OFFSET);
@@ -1375,6 +1377,7 @@ Parameters::Parameters():
     linclustworkflow = combineList(clust, align);
     linclustworkflow = combineList(linclustworkflow, kmermatcher);
     linclustworkflow = combineList(linclustworkflow, rescorediagonal);
+    linclustworkflow.push_back(&PARAM_AASTORE);
     linclustworkflow.push_back(&PARAM_REMOVE_TMP_FILES);
     linclustworkflow.push_back(&PARAM_REUSELATEST);
     linclustworkflow.push_back(&PARAM_RUNNER);
@@ -1911,7 +1914,16 @@ void Parameters::parseParameters(int argc, const char *pargv[], const Command &c
                         argIdx++;
                     } else if (typeid(bool) == par[parIdx]->type) {
                         bool *value = (bool *) par[parIdx]->value;
-                        if (argIdx + 1 == argc || pargv[argIdx+1][0] == '-') {
+                        if (par[parIdx]->uniqid == PARAM_AASTORE.uniqid &&
+                            (argIdx + 1 == argc ||
+                             (std::string(pargv[argIdx+1]) != "0" &&
+                              std::string(pargv[argIdx+1]) != "1" &&
+                              std::string(pargv[argIdx+1]) != "true" &&
+                              std::string(pargv[argIdx+1]) != "false" &&
+                              std::string(pargv[argIdx+1]) != "TRUE" &&
+                              std::string(pargv[argIdx+1]) != "FALSE"))) {
+                            *value = true;
+                        } else if (argIdx + 1 == argc || pargv[argIdx+1][0] == '-') {
                             *value = !*value;
                         } else {
                             *value = parseBool(pargv[argIdx+1]);
@@ -2458,6 +2470,7 @@ void Parameters::setDefaults() {
     // createdb
     createdbMode = SEQUENCE_SPLIT_MODE_HARD;
     shuffleDatabase = true;
+    aastore = false;
     writeLookup = true;
 
     // format alignment

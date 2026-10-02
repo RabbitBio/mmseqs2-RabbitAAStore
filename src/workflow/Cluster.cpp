@@ -1,4 +1,5 @@
 #include "Parameters.h"
+#include "AAStoreDatabaseBuilder.h"
 #include "Util.h"
 #include "DBWriter.h"
 #include "CommandCaller.h"
@@ -115,6 +116,7 @@ int clusteringworkflow(int argc, const char **argv, const Command& command) {
     par.PARAM_S.addCategory(MMseqsParameter::COMMAND_EXPERT);
     par.PARAM_INCLUDE_ONLY_EXTENDABLE.addCategory(MMseqsParameter::COMMAND_EXPERT);
     par.parseParameters(argc, argv, command, false, 0, 0);
+    if (par.aastore) prepareAAStoreDatabase(par.db1, par.threads);
     const int dbType = FileUtil::parseDbType(par.db1.c_str());
     bool isNucleotideDb = (Parameters::isEqualDbtype(dbType, Parameters::DBTYPE_NUCLEOTIDES));
     if (isNucleotideDb) {
@@ -139,6 +141,9 @@ int clusteringworkflow(int argc, const char **argv, const Command& command) {
     par.filenames.push_back(tmpDir);
 
     CommandCaller cmd;
+    if (par.PARAM_AASTORE.wasSet) {
+        cmd.addVariable("MMSEQS_AASTORE_ENABLED", par.aastore ? "1" : "0");
+    }
     cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
     const int originalRescoreMode = par.rescoreMode;
     par.rescoreMode = Parameters::RESCORE_MODE_ALIGNMENT;

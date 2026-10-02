@@ -1,4 +1,5 @@
 #include "Parameters.h"
+#include "AAStoreDatabaseBuilder.h"
 #include "Util.h"
 #include "DBWriter.h"
 #include "CommandCaller.h"
@@ -31,6 +32,7 @@ int linclust(int argc, const char **argv, const Command& command) {
     par.PARAM_INCLUDE_ONLY_EXTENDABLE.addCategory(MMseqsParameter::COMMAND_EXPERT);
 
     par.parseParameters(argc, argv, command, true, 0, 0);
+    if (par.aastore) prepareAAStoreDatabase(par.db1, par.threads);
 
     std::string tmpDir = par.db3;
     std::string hash = SSTR(par.hashParameter(command.databases, par.filenames, par.linclustworkflow));
@@ -42,6 +44,9 @@ int linclust(int argc, const char **argv, const Command& command) {
     par.filenames.push_back(tmpDir);
 
     CommandCaller cmd;
+    if (par.PARAM_AASTORE.wasSet) {
+        cmd.addVariable("MMSEQS_AASTORE_ENABLED", par.aastore ? "1" : "0");
+    }
     cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
     cmd.addVariable("RUNNER", par.runner.c_str());
 

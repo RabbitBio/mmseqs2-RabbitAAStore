@@ -325,6 +325,8 @@ void AAStoreTargetReader::open(
 bool AAStoreTargetReader::openForDatabase(
         const std::string& database, size_t computeThreads,
         uint64_t stageMemoryReserve) {
+    const char* enabled = std::getenv("MMSEQS_AASTORE_ENABLED");
+    if (enabled != nullptr && std::strcmp(enabled, "0") == 0) return false;
     const char* environmentPath = std::getenv("MMSEQS_AASTORE");
     const std::string path = environmentPath != nullptr && environmentPath[0] != '\0'
         ? environmentPath : associatedStorePath(database);

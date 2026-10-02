@@ -588,6 +588,7 @@ public:
     int dbType;
     int createdbMode;
     bool shuffleDatabase;
+    bool aastore;
 
     // splitsequence
     int sequenceOverlap;
@@ -954,6 +955,7 @@ public:
     PARAMETER(PARAM_DB_TYPE)
     PARAMETER(PARAM_CREATEDB_MODE)
     PARAMETER(PARAM_SHUFFLE)
+    PARAMETER(PARAM_AASTORE)
     PARAMETER(PARAM_WRITE_LOOKUP)
 
     // convert2fasta

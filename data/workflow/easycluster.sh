@@ -52,6 +52,10 @@ mv "${TMP_PATH}/rep_seq.fasta"  "${RESULTS}_rep_seq.fasta"
 mv "${TMP_PATH}/cluster.tsv"  "${RESULTS}_cluster.tsv"
 
 if [ -n "${REMOVE_TMP}" ]; then
+    if [ -n "${AASTORE}" ]; then
+        rm -rf -- "${TMP_PATH}/input.aastore"
+        rm -f -- "${TMP_PATH}/input.aastore.path"
+    fi
     # shellcheck disable=SC2086
     "$MMSEQS" rmdb "${TMP_PATH}/input" ${VERBOSITY_PAR}
     # shellcheck disable=SC2086

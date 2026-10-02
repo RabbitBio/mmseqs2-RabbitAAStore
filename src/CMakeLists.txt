@@ -54,6 +54,7 @@ target_include_directories(mmseqs-framework PUBLIC taxonomy)
 target_include_directories(mmseqs-framework PUBLIC util)
 target_include_directories(mmseqs-framework PUBLIC .)
 target_include_directories(mmseqs-framework PUBLIC ${AASTORE_INCLUDE_DIR})
+target_include_directories(mmseqs-framework PRIVATE "${AASTORE_ROOT}/src")
 
 add_dependencies(mmseqs-framework generated)
 

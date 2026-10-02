@@ -52,6 +52,7 @@ int easylinclust(int argc, const char **argv, const Command &command) {
     }
     par.PARAM_COMPRESSED.removeCategory(MMseqsParameter::COMMAND_EXPERT);
     par.PARAM_THREADS.removeCategory(MMseqsParameter::COMMAND_EXPERT);
+    par.PARAM_AASTORE.removeCategory(MMseqsParameter::COMMAND_EXPERT);
     par.PARAM_V.removeCategory(MMseqsParameter::COMMAND_EXPERT);
 
     setEasyLinclustDefaults(&par);
@@ -67,6 +68,7 @@ int easylinclust(int argc, const char **argv, const Command &command) {
     par.filenames.pop_back();
 
     CommandCaller cmd;
+    cmd.addVariable("AASTORE", par.aastore ? "1" : NULL);
     cmd.addVariable("TMP_PATH", tmpDir.c_str());
     cmd.addVariable("RESULTS", par.filenames.back().c_str());
     par.filenames.pop_back();

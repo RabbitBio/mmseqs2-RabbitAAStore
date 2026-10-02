@@ -298,6 +298,14 @@ int main() {
             associated.mapFromMMseqsKeys(keys);
             check_batch(associated, source, keys, 4);
 
+            {
+                ScopedEnvironment disabled("MMSEQS_AASTORE_ENABLED", "0");
+                AAStoreTargetReader native;
+                if (native.openForDatabase(database, 4)) {
+                    throw std::runtime_error("disabled AAStore reader opened");
+                }
+            }
+
             AAStoreTargetReader missing;
             if (missing.openForDatabase((directory / "missing").string(), 4)) {
                 throw std::runtime_error(

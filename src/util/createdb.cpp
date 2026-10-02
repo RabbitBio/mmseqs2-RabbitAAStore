@@ -5,6 +5,7 @@
  * modified by Milot Mirdita <milot@mirdita.de>
  */
 #include "FileUtil.h"
+#include "AAStoreDatabaseBuilder.h"
 #include "DBWriter.h"
 #include "Debug.h"
 #include "Util.h"
@@ -346,6 +347,13 @@ void processSeqBatch(Parameters & par, DBWriter &seqWriter, DBWriter &hdrWriter,
 int createdb(int argc, const char **argv, const Command& command) {
     Parameters &par = Parameters::getInstance();
     par.parseParameters(argc, argv, command, false, Parameters::PARSE_VARIADIC, 0);
+    if (par.aastore && (par.gpu ||
+        par.createdbMode == Parameters::SEQUENCE_SPLIT_MODE_GPU ||
+        par.identifierOffset != 0 || par.dbType == 2)) {
+        Debug(Debug::ERROR) << "--aastore requires a non-GPU amino-acid database "
+                              "with --id-offset 0\n";
+        EXIT(EXIT_FAILURE);
+    }
     if(par.gpu){
         par.createdbMode = Parameters::SEQUENCE_SPLIT_MODE_GPU;
         par.maskMode = 1;
@@ -814,6 +822,8 @@ int createdb(int argc, const char **argv, const Command& command) {
     }
 
     delete[] sourceLookup;
+
+    if (par.aastore) prepareAAStoreDatabase(dataFile, par.threads, true);
 
     return EXIT_SUCCESS;
 }

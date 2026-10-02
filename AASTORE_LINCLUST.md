@@ -1,21 +1,23 @@
 # Minimal AAStore integration for Linclust
 
 This branch uses AAStore only as an optional random-access sequence reader.
-MMseqs2 continues to own database creation, k-mer matching, result databases,
-exports, and the native sequence payload.
+MMseqs2 continues to own database creation, shuffle, k-mer matching, result
+databases, exports, and the native sequence payload. `--aastore` automatically
+adds sequence-only AAStore construction after native database creation.
 
-The integration has five parts:
+The integration has six parts:
 
 1. `AAStoreTargetReader`: storage selection, memory budgeting, ID mapping,
    FullMemory reads, and thread-local random batches.
 2. `rescorediagonal`: AAStore query/target access for same-database rescoring.
 3. `Alignment`: AAStore target access and same-database query access.
 4. `createsubdb`: propagation of the small `.aastore.path` association.
-5. CMake wiring and focused unit/integration tests.
+5. `--aastore`: automatic construction in final MMseqs ID order and workflow
+   parameter forwarding.
+6. CMake wiring and focused unit/integration tests.
 
-There is no AAStore path in `createdb`, `kmermatcher`,
-`createseqfiledb`, or `result2repseq`. AAStore does not replace the native
-MMseqs2 sequence file.
+There is no AAStore read path in `kmermatcher`, `createseqfiledb`, or
+`result2repseq`. AAStore does not replace the native MMseqs2 sequence file.
 
 Linclust's workflow and clustering parameters are unchanged. The native
 `--cluster-mode` option applies to both clustering passes; the integration
@@ -29,8 +31,7 @@ AAStore sources are included in `lib/aastore` and built together with MMseqs2:
 
 ```bash
 cmake -S . -B build-aastore
-cmake --build build-aastore -j --target \
-  mmseqs aastore_build aastore_reorder_createdb test_aastore_reader
+cmake --build build-aastore -j8
 ```
 
 The default `AASTORE_ROOT` is this project's `lib/aastore` directory. No
@@ -46,7 +47,48 @@ build that cached the old sibling paths, clear those settings once:
 cmake -S . -B build-aastore -UAASTORE_ROOT -UAASTORE_LIBRARY
 ```
 
-## Prepare data
+## Automatic workflows
+
+Use the usual native command with one additional option:
+
+```bash
+./build-aastore/src/mmseqs easy-linclust proteins.fasta clusters tmp \
+  --threads 64 --aastore
+
+# Cascaded clustering is supported as well.
+./build-aastore/src/mmseqs easy-cluster proteins.fasta clusters tmp \
+  --threads 64 --aastore
+```
+
+`createdb` and workflows over an existing native database also accept the flag:
+
+```bash
+./build-aastore/src/mmseqs createdb proteins.fasta target --aastore
+./build-aastore/src/mmseqs linclust target clusters tmp --threads 64 --aastore
+```
+
+Native `createdb` completes its usual shuffle/renumbering first. AAStore then
+encodes those records directly in final key order: AAStore ID `i` is native
+key `i`. This avoids building, decoding, and rewriting a separate input-order
+AAStore, and does not create an intermediate FASTA. Names and descriptions
+remain in the native header database. Compressed/multiple FASTA inputs use
+the native parser. Shuffle and createdb-mode defaults are not changed; native
+soft mode disables shuffle even when `--shuffle 1` was requested.
+
+An existing associated store is reused; otherwise `linclust`/`cluster` builds
+`target.aastore` automatically. A local store older than the native index is
+rebuilt. Subsets retain the parent association. Easy
+workflows remove their own temporary store with `--remove-tmp-files 1`.
+Automatic construction currently requires a non-GPU amino-acid database
+with dense keys starting at zero (`--id-offset 0`).
+
+`--aastore` and `--aastore 1` enable automatic preparation. `--aastore 0`
+explicitly selects native sequence reads for the workflow, even when a store
+is associated. Without the option, no store is built automatically; the
+existing explicit environment/association-based reader selection remains
+available for compatibility.
+
+## Manual preparation
 
 Build a temporary input-order AAStore, then apply the fixed 32-way permutation
 used by the default `createdb --shuffle 1`. The reorder scans its source
@@ -140,13 +182,19 @@ smaller budget selects ByteRange.
 | `MMSEQS_AASTORE_MAX_RANGE_BYTES` | Normal merged-range cap | 16 KiB |
 | `MMSEQS_AASTORE_MAX_EXACT_RANGE_BYTES` | Exact-range cap | 1 MiB |
 
-No Linclust-specific build, scan, stream-block, ID-map, nested-worker, or
+No Linclust-specific scan, stream-block, ID-map, nested-worker, or
 diagnostic switches are part of this interface.
 
 ## Tests
 
 ```bash
+cmake --build build-aastore -j8 --target test_aastore_reader
 ./build-aastore/src/test_aastore_reader
+
+python3 src/test/test_aastore_cli.py \
+  --mmseqs build-aastore/src/mmseqs \
+  --builder build-aastore/lib/aastore/aastore_build \
+  --workdir /tmp/aastore-cli-test
 
 python3 src/test/test_aastore_linclust.py \
   --mmseqs build-aastore/src/mmseqs \
@@ -160,3 +208,8 @@ ungapped Linclust, all three storage modes, both I/O backends, direct
 `Alignment` over a reordered subset, and `createsubdb` association
 propagation. It also verifies that `--cluster-mode 3` reaches both native
 clustering passes without the removed environment override.
+
+The automatic CLI test compares encoded stores with the public FASTA builder
+after native export, including shuffled, unshuffled, soft, compressed and
+multiple-input databases. It compares native and AAStore workflow results,
+tests reuse/rebuild behavior and verifies easy-workflow cleanup.
