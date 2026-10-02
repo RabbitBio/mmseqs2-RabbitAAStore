@@ -16,32 +16,6 @@ const char* binary_name = "test_aastore_reader";
 
 namespace {
 
-class ScopedEnvironment {
-public:
-    ScopedEnvironment(const char* name, const char* value)
-        : name_(name), present_(std::getenv(name) != nullptr),
-          original_(present_ ? std::getenv(name) : "") {
-        if (value) {
-            ::setenv(name_, value, 1);
-        } else {
-            ::unsetenv(name_);
-        }
-    }
-
-    ~ScopedEnvironment() {
-        if (present_) {
-            ::setenv(name_, original_.c_str(), 1);
-        } else {
-            ::unsetenv(name_);
-        }
-    }
-
-private:
-    const char* name_;
-    bool present_;
-    std::string original_;
-};
-
 void check_memory_budget() {
     constexpr uint64_t gib = UINT64_C(1024) * 1024 * 1024;
     constexpr uint64_t mib = UINT64_C(1024) * 1024;
@@ -281,33 +255,31 @@ int main() {
         }
 
         {
-            ScopedEnvironment explicitPath(
-                "MMSEQS_AASTORE", nullptr);
-            ScopedEnvironment cache(
-                "MMSEQS_AASTORE_CACHE_BYTES", "1");
-            ScopedEnvironment full(
-                "MMSEQS_AASTORE_FULL_MEMORY", "0");
-            ScopedEnvironment backend(
-                "MMSEQS_AASTORE_IO_BACKEND", "pread");
+            AAStoreTargetReader native;
+            if (native.openForDatabase(database, 4)) {
+                throw std::runtime_error("AAStore was enabled without explicit opt-in");
+            }
+
             AAStoreTargetReader associated;
-            if (!associated.openForDatabase(database, 4) ||
-                associated.fullMemory()) {
+            if (!associated.openForDatabase(database, 4, 0, true)) {
                 throw std::runtime_error(
                     "AAStore associated random reader did not open");
             }
             associated.mapFromMMseqsKeys(keys);
             check_batch(associated, source, keys, 4);
 
-            {
-                ScopedEnvironment disabled("MMSEQS_AASTORE_ENABLED", "0");
-                AAStoreTargetReader native;
-                if (native.openForDatabase(database, 4)) {
-                    throw std::runtime_error("disabled AAStore reader opened");
-                }
+            AAStoreTargetReader batched;
+            if (!batched.openForDatabase(
+                    database, 4, std::numeric_limits<uint64_t>::max(), true) ||
+                batched.fullMemory()) {
+                throw std::runtime_error(
+                    "exhausted memory budget enabled resident reads");
             }
+            batched.mapFromMMseqsKeys(keys);
+            check_batch(batched, source, keys, 4);
 
             AAStoreTargetReader missing;
-            if (missing.openForDatabase((directory / "missing").string(), 4)) {
+            if (missing.openForDatabase((directory / "missing").string(), 4, 0, true)) {
                 throw std::runtime_error(
                     "unassociated database unexpectedly enabled AAStore");
             }
@@ -316,14 +288,21 @@ int main() {
                 std::ofstream locator(database + ".aastore.path");
                 locator << (directory / "missing_store").string() << '\n';
             }
-            ScopedEnvironment overridePath("MMSEQS_AASTORE", store.c_str());
-            AAStoreTargetReader overridden;
-            if (!overridden.openForDatabase(database, 4)) {
+            AAStoreTargetReader defaultNative;
+            if (defaultNative.openForDatabase(database, 4)) {
                 throw std::runtime_error(
-                    "explicit AAStore path did not override association");
+                    "invalid association affected default native reads");
             }
-            overridden.mapFromMMseqsKeys(keys);
-            check_batch(overridden, source, keys, 4);
+            bool rejected = false;
+            try {
+                AAStoreTargetReader invalidAssociation;
+                invalidAssociation.openForDatabase(database, 4, 0, true);
+            } catch (const std::runtime_error&) {
+                rejected = true;
+            }
+            if (!rejected) {
+                throw std::runtime_error("invalid database association was accepted");
+            }
         }
 
         std::filesystem::remove_all(directory);

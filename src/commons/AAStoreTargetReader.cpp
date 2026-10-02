@@ -137,49 +137,20 @@ uint64_t file_bytes(const std::filesystem::path& path) {
     return error ? 0 : static_cast<uint64_t>(bytes);
 }
 
-uint64_t environment_bytes(const char* name, uint64_t fallback) {
-    const char* text = std::getenv(name);
-    if (text == nullptr || text[0] == '\0') return fallback;
-    char* end = nullptr;
-    errno = 0;
-    const unsigned long long value = std::strtoull(text, &end, 10);
-    return errno == 0 && end != text && *end == '\0'
-        ? static_cast<uint64_t>(value) : fallback;
-}
-
 aastore_memory::Budget automatic_storage_budget(
         const std::string& database, size_t computeThreads,
         uint64_t stageMemoryReserve) {
     const MemoryAvailability memory = memory_availability();
     const uint64_t indexReserve = database.empty()
         ? 0 : file_bytes(database + ".index");
-    const uint64_t perThreadBytes = environment_bytes(
-        "MMSEQS_AASTORE_THREAD_BATCH_BYTES", UINT64_C(64) * 1024 * 1024);
     const uint64_t threadReserve = saturating_multiply(
-        std::max<size_t>(1, computeThreads), perThreadBytes);
+        std::max<size_t>(1, computeThreads),
+        AAStoreTargetReader::kThreadBatchBytes);
     aastore_memory::Budget budget = aastore_memory::plan(
         memory.limit, memory.available, indexReserve, threadReserve,
         stageMemoryReserve);
     budget.cgroupLimited = memory.cgroupLimited;
     return budget;
-}
-
-size_t positive_environment_size(const char* name, size_t fallback) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == '\0') return fallback;
-    size_t parsed = 0;
-    for (const char* digit = value; *digit; ++digit) {
-        if (*digit < '0' || *digit > '9' ||
-            parsed > (std::numeric_limits<size_t>::max() -
-                      static_cast<size_t>(*digit - '0')) / 10) {
-            throw std::invalid_argument(std::string("invalid ") + name);
-        }
-        parsed = parsed * 10 + static_cast<size_t>(*digit - '0');
-    }
-    if (parsed == 0) {
-        throw std::invalid_argument(std::string("invalid ") + name);
-    }
-    return parsed;
 }
 
 const char* storage_mode_name(aastore::StorageMode mode) {
@@ -324,59 +295,30 @@ void AAStoreTargetReader::open(
 
 bool AAStoreTargetReader::openForDatabase(
         const std::string& database, size_t computeThreads,
-        uint64_t stageMemoryReserve) {
-    const char* enabled = std::getenv("MMSEQS_AASTORE_ENABLED");
-    if (enabled != nullptr && std::strcmp(enabled, "0") == 0) return false;
-    const char* environmentPath = std::getenv("MMSEQS_AASTORE");
-    const std::string path = environmentPath != nullptr && environmentPath[0] != '\0'
-        ? environmentPath : associatedStorePath(database);
+        uint64_t stageMemoryReserve, bool enabled) {
+    if (!enabled) return false;
+    const std::string path = associatedStorePath(database);
     if (path.empty()) return false;
 
+    const aastore_memory::Budget automaticBudget = automatic_storage_budget(
+        database, computeThreads, stageMemoryReserve);
+    const uint64_t packedBytes = file_bytes(
+        std::filesystem::path(path) / "packed.bin");
+    const uint64_t selectedBytes =
+        std::min(automaticBudget.cacheBytes, packedBytes);
     aastore::StoreOptions options;
     size_t cacheBytes = 0;
-    const char* cacheValue = std::getenv("MMSEQS_AASTORE_CACHE_BYTES");
-    const bool cacheExplicit = cacheValue != nullptr && cacheValue[0] != '\0';
-    if (cacheExplicit) {
-        cacheBytes = static_cast<size_t>(
-            std::strtoull(cacheValue, nullptr, 10));
-    }
-    options.storage_mode = cacheBytes == 0
-        ? aastore::StorageMode::ByteRange
-        : aastore::StorageMode::PrefixMemory;
-
-    const char* fullMemoryValue =
-        std::getenv("MMSEQS_AASTORE_FULL_MEMORY");
-    const bool fullMemoryExplicit =
-        fullMemoryValue != nullptr && fullMemoryValue[0] != '\0';
-    if (fullMemoryValue != nullptr &&
-        std::string_view(fullMemoryValue) == "1") {
+    if (packedBytes != 0 && selectedBytes >= packedBytes) {
         options.storage_mode = aastore::StorageMode::FullMemory;
+    } else if (selectedBytes >= kMinimumPrefixBytes) {
+        options.storage_mode = aastore::StorageMode::PrefixMemory;
+        cacheBytes = static_cast<size_t>(std::min<uint64_t>(
+            selectedBytes, std::numeric_limits<size_t>::max()));
+    } else {
+        options.storage_mode = aastore::StorageMode::ByteRange;
     }
 
-    aastore_memory::Budget automaticBudget;
-    const bool automaticMode = !cacheExplicit && !fullMemoryExplicit;
-    if (automaticMode) {
-        automaticBudget = automatic_storage_budget(
-            database, computeThreads, stageMemoryReserve);
-        const uint64_t packedBytes = file_bytes(
-            std::filesystem::path(path) / "packed.bin");
-        const uint64_t selectedBytes =
-            std::min(automaticBudget.cacheBytes, packedBytes);
-        if (packedBytes != 0 && selectedBytes >= packedBytes) {
-            options.storage_mode = aastore::StorageMode::FullMemory;
-            cacheBytes = 0;
-        } else if (selectedBytes >= kMinimumPrefixBytes) {
-            options.storage_mode = aastore::StorageMode::PrefixMemory;
-            cacheBytes = static_cast<size_t>(std::min<uint64_t>(
-                selectedBytes, std::numeric_limits<size_t>::max()));
-        } else {
-            options.storage_mode = aastore::StorageMode::ByteRange;
-            cacheBytes = 0;
-        }
-    }
-
-    options.threads = positive_environment_size(
-        "MMSEQS_AASTORE_PRELOAD_THREADS", 8);
+    options.threads = 8;
     options.cache_bytes = cacheBytes;
     options.resident_names = false;
     options.resident_descriptions = false;
@@ -385,36 +327,18 @@ bool AAStoreTargetReader::openForDatabase(
     mmseqsToAAStoreId_.clear();
     hasIdMap_ = false;
 
+    readOptions_ = aastore::ReadOptions{};
     readOptions_.threads = 1;
-    readOptions_.merge_gap_bytes = positive_environment_size(
-        "MMSEQS_AASTORE_MERGE_GAP_BYTES", 4096);
-    readOptions_.max_merged_range_bytes = positive_environment_size(
-        "MMSEQS_AASTORE_MAX_RANGE_BYTES", 16 * 1024);
-    readOptions_.max_exact_merged_range_bytes = positive_environment_size(
-        "MMSEQS_AASTORE_MAX_EXACT_RANGE_BYTES", 1024 * 1024);
     readOptions_.io_backend = aastore::IoBackend::IoUring;
-    const char* ioBackend = std::getenv("MMSEQS_AASTORE_IO_BACKEND");
-    if (ioBackend != nullptr && ioBackend[0] != '\0') {
-        if (std::string_view(ioBackend) == "pread") {
-            readOptions_.io_backend = aastore::IoBackend::Pread;
-        } else if (std::string_view(ioBackend) != "io_uring") {
-            throw std::runtime_error(
-                "MMSEQS_AASTORE_IO_BACKEND must be io_uring or pread");
-        }
-    }
 
     Debug(Debug::INFO)
         << "AAStore target enabled: " << path
-        << " io_backend="
-        << (readOptions_.io_backend == aastore::IoBackend::Pread
-                ? "pread" : "io_uring")
+        << " io_backend=io_uring"
         << " threads=1"
         << " merge_gap=" << readOptions_.merge_gap_bytes
         << " max_range=" << readOptions_.max_merged_range_bytes
         << " cache_bytes=" << cacheBytes
         << " storage_mode=" << storage_mode_name(options.storage_mode)
-        << " mode_source="
-        << (automaticMode ? "automatic" : "environment")
         << " memory_limit=" << automaticBudget.memoryLimit
         << " memory_available=" << automaticBudget.memoryAvailable
         << " memory_reserve=" << automaticBudget.memoryReserve
@@ -442,11 +366,6 @@ bool AAStoreTargetReader::enabled() const noexcept {
 bool AAStoreTargetReader::fullMemory() const noexcept {
     return store_ &&
         store_->storage_mode() == aastore::StorageMode::FullMemory;
-}
-
-size_t AAStoreTargetReader::threadBatchBytes() const {
-    return positive_environment_size(
-        "MMSEQS_AASTORE_THREAD_BATCH_BYTES", 64 * 1024 * 1024);
 }
 
 size_t AAStoreTargetReader::threadBatchQueueDepth(size_t computeThreads) {

@@ -72,7 +72,6 @@ public:
         std::vector<char*> outputs;
         size_t begin = 0;
         size_t end = 0;
-        size_t candidateBytes = 0;
     };
 
     AAStoreTargetReader() = default;
@@ -81,9 +80,11 @@ public:
     void open(const std::string& path,
               const aastore::StoreOptions& storeOptions,
               const aastore::ReadOptions& readOptions);
+    // 仅显式启用时读取数据库关联的 AAStore；默认保持原生读取。
     bool openForDatabase(const std::string& database,
                          size_t computeThreads = 1,
-                         uint64_t stageMemoryReserve = 0);
+                         uint64_t stageMemoryReserve = 0,
+                         bool enabled = false);
 
     static std::string associatedStorePath(const std::string& database);
     static void associateDatabase(const std::string& database,
@@ -91,7 +92,7 @@ public:
 
     bool enabled() const noexcept;
     bool fullMemory() const noexcept;
-    size_t threadBatchBytes() const;
+    static constexpr size_t kThreadBatchBytes = 64 * 1024 * 1024;
     static constexpr size_t kThreadBatchIoBudget = 512;
     static size_t threadBatchQueueDepth(size_t computeThreads);
     void fetch_into(ThreadBatch& batch, size_t computeThreads) const;

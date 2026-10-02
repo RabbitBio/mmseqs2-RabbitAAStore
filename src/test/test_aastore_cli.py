@@ -21,16 +21,13 @@ def main():
     builder = args.builder.resolve()
     root = args.workdir.resolve()
     root.mkdir(parents=True, exist_ok=False)
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith('MMSEQS_AASTORE')}
+    environment = os.environ.copy()
     environment['LC_ALL'] = 'C'
     checks = []
 
-    def run(label, arguments, overrides=None, success=True):
-        env = dict(environment)
-        env.update(overrides or {})
+    def run(label, arguments, success=True):
         with (root / (label + '.log')).open('w') as output:
-            result = subprocess.run([str(value) for value in arguments], env=env,
+            result = subprocess.run([str(value) for value in arguments], env=environment,
                                     stdout=output, stderr=subprocess.STDOUT,
                                     timeout=300)
         if (result.returncode == 0) != success:
@@ -135,24 +132,23 @@ def main():
     def digest(path):
         return hashlib.sha256(b'\n'.join(sorted(path.read_bytes().splitlines()))).hexdigest()
 
-    storage_modes = {
-        'full': {'MMSEQS_AASTORE_FULL_MEMORY': '1'},
-        'byte': {'MMSEQS_AASTORE_FULL_MEMORY': '0',
-                 'MMSEQS_AASTORE_CACHE_BYTES': '0'},
-    }
     database = root / 'shuffled'
     baseline = None
     packed = root / 'shuffled.aastore/packed.bin'
     before = packed.stat().st_mtime_ns
-    for label, overrides in [('native', {})] + list(storage_modes.items()):
+    cases = [
+        ('native', [], False),
+        ('disabled', ['--aastore', '0'], False),
+        ('aastore', ['--aastore'], True),
+        ('aastore_value', ['--aastore', '1'], True),
+    ]
+    for label, flags, enabled in cases:
         result = root / ('direct_' + label)
         arguments = [binary, 'linclust', database, result,
                      root / ('direct_' + label + '_tmp'), '--threads', '4',
                      '--min-seq-id', '0.9', '-c', '0.9', '--cov-mode', '0',
-                     '--cluster-mode', '3', '-v', '3', '--aastore']
-        if label == 'native':
-            arguments.append('0')
-        log = run('direct_' + label, arguments, overrides)
+                     '--cluster-mode', '3', '-v', '3', *flags]
+        log = run('direct_' + label, arguments)
         tsv = root / ('direct_' + label + '.tsv')
         run('direct_' + label + '_tsv', [binary, 'createtsv', database,
                                        database, result, tsv, '-v', '0'])
@@ -161,7 +157,15 @@ def main():
             baseline = value
         check('direct_' + label + '_results', value == baseline)
         check('direct_' + label + '_reader',
-              ('AAStore target enabled:' in log) == (label != 'native'))
+              ('AAStore target enabled:' in log) == enabled)
+        if enabled:
+            commands = [shlex.split(line) for line in log.splitlines()
+                        if line.startswith(('rescorediagonal ', 'align '))]
+            check('direct_' + label + '_child_flags', bool(commands) and all(
+                command[command.index('--aastore') + 1] == '1'
+                for command in commands))
+            check('direct_' + label + '_defaults',
+                  'io_backend=io_uring threads=1 merge_gap=4096 max_range=16384' in log)
     check('existing_store_not_rebuilt', packed.stat().st_mtime_ns == before)
 
     missing = root / 'missing_store'
@@ -178,6 +182,23 @@ def main():
                             root / 'gapped_tmp', '--aastore', '-v', '1'], success=False)
     check('gapped_keys_rejected', not Path(str(gapped) + '.aastore').exists())
 
+    broken = root / 'broken_association'
+    run('broken_createdb', [binary, 'createdb', fasta, broken, '--dbtype', '1',
+                            '-v', '0'])
+    check('createdb_native_no_store', not Path(str(broken) + '.aastore').exists())
+    Path(str(broken) + '.aastore.path').write_text(str(root / 'missing_store_path') + '\n')
+    log = run('broken_native', [binary, 'linclust', broken, root / 'broken_native',
+               root / 'broken_native_tmp', '--threads', '4', '--min-seq-id', '0.9',
+               '-c', '0.9', '--cov-mode', '0', '--cluster-mode', '3', '-v', '3'])
+    check('native_ignores_broken_association', 'AAStore target enabled:' not in log)
+    broken_tsv = root / 'broken_native.tsv'
+    run('broken_native_tsv', [binary, 'createtsv', broken, broken,
+                              root / 'broken_native', broken_tsv, '-v', '0'])
+    check('broken_association_native_results', digest(broken_tsv) == baseline)
+    run('broken_enabled', [binary, 'linclust', broken, root / 'broken_enabled',
+                            root / 'broken_enabled_tmp', '--aastore', '-v', '1'], success=False)
+    check('enabled_rejects_broken_association', not (root / 'broken_enabled.dbtype').exists())
+
     # Easy workflows must forward --aastore through both creation and cascade.
     for workflow, extra in (
             ('easy-linclust', ['--createdb-mode', '0', '--shuffle', '1']),
@@ -190,8 +211,10 @@ def main():
             arguments = [binary, workflow, fasta, prefix, tmp, '--threads', '4',
                          '--min-seq-id', '0.9', '-c', '0.9', '--cov-mode', '0',
                          '--cluster-mode', '3', '--remove-tmp-files', '0',
-                         '-v', '3', *extra, '--aastore', '1' if enabled else '0']
-            log = run(label, arguments, storage_modes['byte'])
+                         '-v', '3', *extra]
+            if enabled:
+                arguments.append('--aastore')
+            log = run(label, arguments)
             value = digest(Path(str(prefix) + '_cluster.tsv'))
             if baseline is None:
                 baseline = value
@@ -207,6 +230,8 @@ def main():
                 check(label + '_cluster_mode', bool(commands) and all(
                     command[command.index('--cluster-mode') + 1] == '3'
                     for command in commands))
+            else:
+                check(label + '_no_automatic_store', not list(tmp.glob('*/input.aastore')))
 
     cleanup_tmp = root / 'cleanup_tmp'
     run('cleanup', [binary, 'easy-linclust', fasta, root / 'cleanup',

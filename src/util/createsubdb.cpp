@@ -7,6 +7,7 @@
 #include "AAStoreTargetReader.h"
 
 #include <climits>
+#include <exception>
 
 int createsubdb(int argc, const char **argv, const Command& command) {
     Parameters& par = Parameters::getInstance();
@@ -25,8 +26,13 @@ int createsubdb(int argc, const char **argv, const Command& command) {
     }
 
     const bool lookupMode = par.dbIdMode == Parameters::ID_MODE_LOOKUP;
-    const std::string aaStorePath =
-        AAStoreTargetReader::associatedStorePath(par.db2);
+    std::string aaStorePath;
+    try {
+        aaStorePath = AAStoreTargetReader::associatedStorePath(par.db2);
+    } catch (const std::exception& error) {
+        // 关联只用于传递元数据，损坏的关联不应阻止原生子库创建。
+        Debug(Debug::WARNING) << "Skipping AAStore association: " << error.what() << "\n";
+    }
     int dbMode = DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA;
     if (lookupMode) {
         dbMode |= DBReader<unsigned int>::USE_LOOKUP_REV;

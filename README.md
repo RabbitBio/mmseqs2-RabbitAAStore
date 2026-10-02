@@ -20,6 +20,9 @@ files, clustering parameters and exports are unchanged. `easy-cluster`,
 `createdb`, `linclust` and `cluster` also accept the option. See
 [AAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
 The upstream prebuilt binaries listed below do not include this option.
+Without `--aastore`, sequence reads always use native MMseqs2, even when an
+AAStore is associated. Memory configuration is automatic; the adapter has
+no AAStore-specific environment variables.
 
 MMseqs2 (Many-against-Many sequence searching) is a software suite to search and cluster huge protein and nucleotide sequence sets. MMseqs2 is free and open source software implemented in C++ for Linux, MacOS, and (as beta version, via cygwin) Windows. The software is designed to run on multiple cores and servers and exhibits very good scalability. MMseqs2 can run 10000 times faster than BLAST. At 100 times its speed it achieves almost the same sensitivity. It can perform profile searches with the same sensitivity as PSI-BLAST at over 400 times its speed.
 

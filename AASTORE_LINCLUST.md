@@ -20,9 +20,8 @@ There is no AAStore read path in `kmermatcher`, `createseqfiledb`, or
 `result2repseq`. AAStore does not replace the native MMseqs2 sequence file.
 
 Linclust's workflow and clustering parameters are unchanged. The native
-`--cluster-mode` option applies to both clustering passes; the integration
-does not interpret `MMSEQS_FINAL_CLUSTER_MODE`. Nonresident AAStore reads use
-candidate-byte batches, while native and FullMemory rescoring retain the
+`--cluster-mode` option applies to both clustering passes. Nonresident AAStore
+reads use candidate-byte batches, while native and FullMemory rescoring retain the
 original `schedule(dynamic, 1)` query scheduling.
 
 ## Build
@@ -34,18 +33,11 @@ cmake -S . -B build-aastore
 cmake --build build-aastore -j8
 ```
 
-The default `AASTORE_ROOT` is this project's `lib/aastore` directory. No
-sibling checkout or prebuilt `libaastore.a` is required. AAStore tools are
-written to `build-aastore/lib/aastore`. Linux `liburing` is required.
-
-An external source checkout can still be selected with
-`-DAASTORE_ROOT=/path/to/AABinaryStoreV2`. To link a prebuilt library instead,
-also pass `-DAASTORE_LIBRARY=/path/to/libaastore.a`. When updating an existing
-build that cached the old sibling paths, clear those settings once:
-
-```bash
-cmake -S . -B build-aastore -UAASTORE_ROOT -UAASTORE_LIBRARY
-```
+The build always uses this project's `lib/aastore` sources; no external
+checkout or prebuilt archive is selected. Linux `liburing` is required.
+The AAStore library is linked into `mmseqs`. Standalone tools are not part of
+the default build or MMseqs2 installation, but remain available as explicit
+build targets for tests or independent use.
 
 ## Automatic workflows
 
@@ -82,47 +74,28 @@ workflows remove their own temporary store with `--remove-tmp-files 1`.
 Automatic construction currently requires a non-GPU amino-acid database
 with dense keys starting at zero (`--id-offset 0`).
 
-`--aastore` and `--aastore 1` enable automatic preparation. `--aastore 0`
-explicitly selects native sequence reads for the workflow, even when a store
-is associated. Without the option, no store is built automatically; the
-existing explicit environment/association-based reader selection remains
-available for compatibility.
+`--aastore` and `--aastore 1` enable automatic preparation and AAStore reads.
+Without the option, or with `--aastore 0`, sequence reads always use native
+MMseqs2, even when a store is associated. The flag is forwarded to the
+`rescorediagonal` and `align` subprocesses. AAStore has no environment-variable
+configuration in the MMseqs2 adapter.
 
-## Manual preparation
+## Database associations
 
-Build a temporary input-order AAStore, then apply the fixed 32-way permutation
-used by the default `createdb --shuffle 1`. The reorder scans its source
-sequentially, commits the shuffled store, and only then removes the source.
+Automatic preparation writes the store to `target.aastore`. A `createsubdb`
+operation records the parent store's absolute path in the subset's
+`.aastore.path` file, so stable keys continue to address the same physical
+AAStore IDs. The native data link or payload is retained. Associations only
+locate storage; they cannot enable AAStore reads.
 
-```bash
-mmseqs createdb proteins.fasta target
-
-./build-aastore/lib/aastore/aastore_build \
-  proteins.fasta target.aastore.input-order --sequences-only --threads 8
-
-./build-aastore/lib/aastore/aastore_reorder_createdb \
-  target.aastore.input-order target.aastore \
-  --threads 8 --remove-source
-```
-
-AAStore can be selected explicitly:
-
-```bash
-MMSEQS_AASTORE="$PWD/target.aastore" \
-mmseqs linclust target clusters tmp --threads 16
-```
-
-Alternatively, place the absolute store path and a newline in
-`target.aastore.path`. A soft-mode `createsubdb` operation copies this
-association to the resulting view while retaining the usual native data link.
-
-When neither `MMSEQS_AASTORE` nor a valid association is present, both
-alignment stages use the unchanged native MMseqs2 path.
+Without `--aastore`, both alignment stages use the unchanged native MMseqs2
+path. Direct `rescorediagonal` and `align` commands also accept `--aastore`
+to read an already prepared, associated store.
 
 ## Random-access pipeline
 
 For nonresident modes, every compute thread collects complete queries until
-their candidate sequences account for approximately 64 MiB by default. It then:
+their candidate sequences account for approximately 64 MiB. It then:
 
 1. removes duplicate local IDs within the batch;
 2. translates local IDs to AAStore physical IDs;
@@ -147,8 +120,8 @@ Alignment then calls `Sequence::mapSequence` to fill its existing numeric buffer
 
 ## Memory policy
 
-Unless storage mode is explicitly selected, the adapter samples host and
-cgroup memory before opening the sequence index:
+The adapter automatically selects storage mode by sampling host and cgroup
+memory before opening the sequence index:
 
 ```text
 remaining pool =
@@ -168,27 +141,20 @@ fluctuations. The selected prefix is clamped to `packed.bin`; complete
 coverage selects FullMemory, at least 64 MiB selects PrefixMemory, and a
 smaller budget selects ByteRange.
 
-## Supported settings
+## Read configuration
 
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `MMSEQS_AASTORE` | Explicit AAStore directory | database association |
-| `MMSEQS_AASTORE_FULL_MEMORY` | `1`: FullMemory, `0`: nonresident | automatic |
-| `MMSEQS_AASTORE_CACHE_BYTES` | Fixed PrefixMemory bytes; `0`: ByteRange | automatic |
-| `MMSEQS_AASTORE_THREAD_BATCH_BYTES` | Candidate bytes collected per compute thread | 64 MiB |
-| `MMSEQS_AASTORE_IO_BACKEND` | `io_uring` or `pread` | `io_uring` |
-| `MMSEQS_AASTORE_PRELOAD_THREADS` | Prefix/full preload threads | 8 |
-| `MMSEQS_AASTORE_MERGE_GAP_BYTES` | Maximum gap merged into one read | 4096 |
-| `MMSEQS_AASTORE_MAX_RANGE_BYTES` | Normal merged-range cap | 16 KiB |
-| `MMSEQS_AASTORE_MAX_EXACT_RANGE_BYTES` | Exact-range cap | 1 MiB |
-
-No Linclust-specific scan, stream-block, ID-map, nested-worker, or
-diagnostic switches are part of this interface.
+Enable the adapter with `--aastore` and set compute threads with the native
+`--threads` option. Storage mode and prefix size follow the memory policy
+above. The adapter uses `io_uring`, eight preload threads, and the AAStore
+library's default range-merging limits: 4 KiB gaps, 16 KiB normal ranges,
+and 1 MiB exact ranges. These settings are not separate command-line or
+environment-variable options. The standalone AAStore library retains its
+own `StoreOptions` and `ReadOptions` APIs.
 
 ## Tests
 
 ```bash
-cmake --build build-aastore -j8 --target test_aastore_reader
+cmake --build build-aastore -j8 --target test_aastore_reader aastore_build
 ./build-aastore/src/test_aastore_reader
 
 python3 src/test/test_aastore_cli.py \
@@ -198,16 +164,16 @@ python3 src/test/test_aastore_cli.py \
 
 python3 src/test/test_aastore_linclust.py \
   --mmseqs build-aastore/src/mmseqs \
-  --builder build-aastore/lib/aastore/aastore_build \
-  --reorder build-aastore/lib/aastore/aastore_reorder_createdb \
   --workdir /tmp/aastore-linclust-test
 ```
 
-The integration test compares native and AAStore results for gapped and
-ungapped Linclust, all three storage modes, both I/O backends, direct
-`Alignment` over a reordered subset, and `createsubdb` association
-propagation. It also verifies that `--cluster-mode 3` reaches both native
-clustering passes without the removed environment override.
+The unit test covers memory budgeting, all three storage modes, both I/O
+backends, ID mapping, and output-arena reuse. The integration test compares
+native and automatically configured AAStore results for gapped and ungapped
+Linclust with one and four compute threads, using `createdb --aastore` for
+preparation. It also covers direct `Alignment` over a
+reordered subset, and `createsubdb` association propagation. It also verifies
+that `--cluster-mode 3` reaches both native clustering passes.
 
 The automatic CLI test compares encoded stores with the public FASTA builder
 after native export, including shuffled, unshuffled, soft, compressed and

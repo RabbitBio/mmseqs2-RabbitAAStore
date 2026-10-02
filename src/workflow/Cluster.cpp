@@ -141,9 +141,6 @@ int clusteringworkflow(int argc, const char **argv, const Command& command) {
     par.filenames.push_back(tmpDir);
 
     CommandCaller cmd;
-    if (par.PARAM_AASTORE.wasSet) {
-        cmd.addVariable("MMSEQS_AASTORE_ENABLED", par.aastore ? "1" : "0");
-    }
     cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
     const int originalRescoreMode = par.rescoreMode;
     par.rescoreMode = Parameters::RESCORE_MODE_ALIGNMENT;

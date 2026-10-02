@@ -53,8 +53,7 @@ target_include_directories(mmseqs-framework PUBLIC linclust)
 target_include_directories(mmseqs-framework PUBLIC taxonomy)
 target_include_directories(mmseqs-framework PUBLIC util)
 target_include_directories(mmseqs-framework PUBLIC .)
-target_include_directories(mmseqs-framework PUBLIC ${AASTORE_INCLUDE_DIR})
-target_include_directories(mmseqs-framework PRIVATE "${AASTORE_ROOT}/src")
+target_include_directories(mmseqs-framework PRIVATE "${PROJECT_SOURCE_DIR}/lib/aastore/src")
 
 add_dependencies(mmseqs-framework generated)
 
@@ -137,8 +136,7 @@ else ()
 endif ()
 
 target_link_libraries(mmseqs-framework tinyexpr ${ZSTD_LIBRARIES} microtar tantan)
-target_link_libraries(mmseqs-framework ${AASTORE_LIBRARY}
-        ${AASTORE_LIBURING_LIBRARY} stdc++fs)
+target_link_libraries(mmseqs-framework aastore)
 # if (CYGWIN)
 #     target_link_libraries(mmseqs-framework nedmalloc)
 # endif ()

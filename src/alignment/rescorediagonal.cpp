@@ -65,7 +65,7 @@ int doRescorediagonal(Parameters &par,
     const bool sameQTDB = (par.db2.compare(par.db1) == 0);
     AAStoreTargetReader aastoreSequences;
     const bool useAAStore = sameQTDB && aastoreSequences.openForDatabase(
-        par.db2, par.threads, resultReader.getTotalDataSize());
+        par.db2, par.threads, resultReader.getTotalDataSize(), par.aastore);
     const unsigned int targetPreloadMode = useAAStore
         ? (touch ? IndexReader::PRELOAD_INDEX : IndexReader::PRELOAD_NO)
         : (touch ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA)
@@ -92,7 +92,7 @@ int doRescorediagonal(Parameters &par,
     const bool aaStoreDirect = useAAStore && aastoreSequences.fullMemory();
     const bool useAAStoreThreadBatch = useAAStore && !aaStoreDirect;
     const size_t threadBytes = useAAStoreThreadBatch
-        ? aastoreSequences.threadBatchBytes() : 0;
+        ? AAStoreTargetReader::kThreadBatchBytes : 0;
     const size_t threadQueueDepth = useAAStoreThreadBatch
         ? AAStoreTargetReader::threadBatchQueueDepth(par.threads) : 0;
     if (useAAStore) {
@@ -186,7 +186,6 @@ int doRescorediagonal(Parameters &par,
             batch.ids.clear();
             batch.begin = begin;
             batch.end = begin;
-            batch.candidateBytes = 0;
             size_t bytes = 0;
             char keyBuffer[1024];
             for (size_t query = begin; query < limit; ++query) {
@@ -209,7 +208,6 @@ int doRescorediagonal(Parameters &par,
                 batch.end = query + 1;
                 if (bytes >= maxBytes) break;
             }
-            batch.candidateBytes = bytes;
         };
 
         size_t nextThreadBatchQuery = start;

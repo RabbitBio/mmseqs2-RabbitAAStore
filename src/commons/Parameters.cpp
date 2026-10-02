@@ -414,6 +414,7 @@ Parameters::Parameters():
     align.push_back(&PARAM_GAP_EXTEND);
     align.push_back(&PARAM_ZDROP);
     align.push_back(&PARAM_THREADS);
+    align.push_back(&PARAM_AASTORE);
     align.push_back(&PARAM_COMPRESSED);
     align.push_back(&PARAM_V);
 
@@ -515,6 +516,7 @@ Parameters::Parameters():
     rescorediagonal.push_back(&PARAM_SORT_RESULTS);
     rescorediagonal.push_back(&PARAM_PRELOAD_MODE);
     rescorediagonal.push_back(&PARAM_THREADS);
+    rescorediagonal.push_back(&PARAM_AASTORE);
     rescorediagonal.push_back(&PARAM_COMPRESSED);
     rescorediagonal.push_back(&PARAM_V);
 
@@ -1377,7 +1379,6 @@ Parameters::Parameters():
     linclustworkflow = combineList(clust, align);
     linclustworkflow = combineList(linclustworkflow, kmermatcher);
     linclustworkflow = combineList(linclustworkflow, rescorediagonal);
-    linclustworkflow.push_back(&PARAM_AASTORE);
     linclustworkflow.push_back(&PARAM_REMOVE_TMP_FILES);
     linclustworkflow.push_back(&PARAM_REUSELATEST);
     linclustworkflow.push_back(&PARAM_RUNNER);

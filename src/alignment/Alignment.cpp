@@ -77,7 +77,7 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     }
     addCandidateFile(prefDBIndex);
     useAAStoreTarget = aastoreTarget.openForDatabase(
-        targetSeqDB, par.threads, candidateWorkingSet);
+        targetSeqDB, par.threads, candidateWorkingSet, par.aastore);
     aaStoreDirect = useAAStoreTarget && aastoreTarget.fullMemory();
     const unsigned int targetPreloadMode = useAAStoreTarget
         ? (touch ? IndexReader::PRELOAD_INDEX : IndexReader::PRELOAD_NO)
@@ -358,7 +358,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
     const bool useAAStoreThreadBatch = useAAStoreTarget && !aaStoreDirect;
     constexpr size_t queryScheduleChunk = 5;
     const size_t threadBytes = useAAStoreThreadBatch
-        ? aastoreTarget.threadBatchBytes() : 0;
+        ? AAStoreTargetReader::kThreadBatchBytes : 0;
     const size_t threadQueueDepth = useAAStoreThreadBatch
         ? AAStoreTargetReader::threadBatchQueueDepth(threads) : 0;
     size_t flushSize = 1000000;
@@ -402,7 +402,6 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
             batch.ids.clear();
             batch.begin = begin;
             batch.end = begin;
-            batch.candidateBytes = 0;
             size_t bytes = 0;
             char keyBuffer[1024];
             for (size_t query = begin; query < limit; ++query) {
@@ -426,7 +425,6 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                 batch.end = query + 1;
                 if (bytes >= threadBytes) break;
             }
-            batch.candidateBytes = bytes;
         };
 
 #pragma omp parallel num_threads(threads) reduction(+: threadBatchCount, alignmentsNum, totalPassedNum)
