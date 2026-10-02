@@ -12,6 +12,16 @@
 #include "NucleotideMatrix.h"
 #include "IndexReader.h"
 #include "FastSort.h"
+#include "AAStoreTargetReader.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <limits>
+#include <mutex>
+#include <vector>
 
 #ifdef OPENMP
 #include <omp.h>
@@ -52,20 +62,52 @@ int doRescorediagonal(Parameters &par,
     DBReader<unsigned int> * qdbr = NULL;
     DBReader<unsigned int> * tdbr = NULL;
     bool touch = (par.preloadMode != Parameters::PRELOAD_MODE_MMAP);
-    IndexReader * tDbrIdx = new IndexReader(par.db2, par.threads, IndexReader::SEQUENCES,   (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : 0 );
+    const bool sameQTDB = (par.db2.compare(par.db1) == 0);
+    AAStoreTargetReader aastoreSequences;
+    const bool useAAStore = sameQTDB && aastoreSequences.openForDatabase(
+        par.db2, par.threads, resultReader.getTotalDataSize());
+    const unsigned int targetPreloadMode = useAAStore
+        ? (touch ? IndexReader::PRELOAD_INDEX : IndexReader::PRELOAD_NO)
+        : (touch ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA)
+                 : IndexReader::PRELOAD_NO);
+    const int targetDataMode = useAAStore
+        ? DBReader<unsigned int>::USE_INDEX
+        : (DBReader<unsigned int>::USE_INDEX | DBReader<unsigned int>::USE_DATA);
+    IndexReader * tDbrIdx = new IndexReader(
+        par.db2, par.threads, IndexReader::SEQUENCES,
+        targetPreloadMode, targetDataMode);
     int querySeqType = 0;
     tdbr = tDbrIdx->sequenceReader;
     int targetSeqType = tDbrIdx->getDbtype();
-    bool sameQTDB = (par.db2.compare(par.db1) == 0);
     if (sameQTDB == true) {
         qDbrIdx = tDbrIdx;
         qdbr = tdbr;
         querySeqType = targetSeqType;
     } else {
-        // open the sequence, prefiltering and output databases
-        qDbrIdx = new IndexReader(par.db1, par.threads,  IndexReader::SEQUENCES, (touch) ? IndexReader::PRELOAD_INDEX : 0);
+        qDbrIdx = new IndexReader(par.db1, par.threads, IndexReader::SEQUENCES,
+                                  touch ? IndexReader::PRELOAD_INDEX : 0);
         qdbr = qDbrIdx->sequenceReader;
         querySeqType = qdbr->getDbtype();
+    }
+    const bool aaStoreDirect = useAAStore && aastoreSequences.fullMemory();
+    const bool useAAStoreThreadBatch = useAAStore && !aaStoreDirect;
+    const size_t threadBytes = useAAStoreThreadBatch
+        ? aastoreSequences.threadBatchBytes() : 0;
+    const size_t threadQueueDepth = useAAStoreThreadBatch
+        ? AAStoreTargetReader::threadBatchQueueDepth(par.threads) : 0;
+    if (useAAStore) {
+        if (!Parameters::isEqualDbtype(
+                targetSeqType, Parameters::DBTYPE_AMINO_ACIDS)) {
+            throw std::runtime_error(
+                "AAStore rescorediagonal supports amino-acid databases only");
+        }
+        if (tdbr->getSize() != aastoreSequences.size()) {
+            std::vector<uint32_t> targetKeys(tdbr->getSize());
+            for (size_t id = 0; id < targetKeys.size(); ++id) {
+                targetKeys[id] = tdbr->getDbKey(id);
+            }
+            aastoreSequences.mapFromMMseqsKeys(targetKeys);
+        }
     }
     if (par.wrappedScoring)
     {
@@ -76,7 +118,7 @@ int doRescorediagonal(Parameters &par,
     }
 
 
-    if(resultReader.isSortedByOffset() && qdbr->isSortedByOffset()){
+    if(!useAAStore && resultReader.isSortedByOffset() && qdbr->isSortedByOffset()){
         qdbr->setSequentialAdvice();
     }
 
@@ -111,18 +153,69 @@ int doRescorediagonal(Parameters &par,
     if (totalMemory > resultReader.getTotalDataSize()) {
         flushSize = resultReader.getSize();
     }
-    
-    size_t iterations = 1;
-    if(flushSize > 0){
-        iterations = static_cast<int>(ceil(static_cast<double>(dbSize) / static_cast<double>(flushSize)));
+    if (aaStoreDirect) {
+        Debug(Debug::INFO)
+            << "AAStore rescorediagonal: full-memory thread-local get, threads="
+            << par.threads << "\n";
     }
-    
-    for (size_t i = 0; i < iterations; i++) {
-        size_t start = dbFrom + (i * flushSize);
-        size_t bucketSize = std::min(dbSize - (i * flushSize), flushSize);
+    if (useAAStoreThreadBatch) {
+        Debug(Debug::INFO) << "AAStore rescorediagonal: thread-local batch_get_into, "
+                           << "candidate_bytes_per_thread=" << threadBytes
+                           << " query_limit=none"
+                           << " aastore_threads=1 compute_threads=" << par.threads
+                           << " io_queue_budget=" << AAStoreTargetReader::kThreadBatchIoBudget
+                           << " io_queue_depth_per_thread=" << threadQueueDepth
+                           << "\n";
+    }
+
+    size_t threadBatchCount = 0;
+    std::vector<aastore::BatchStats> threadIoStats(useAAStoreThreadBatch ? par.threads : 0);
+
+    size_t processedQueries = 0;
+    while (processedQueries < dbSize) {
+        const size_t start = dbFrom + processedQueries;
+        const size_t bucketSize =
+            std::min(dbSize - processedQueries, flushSize);
         Debug::Progress progress(bucketSize);
 
-#pragma omp parallel
+        auto collectThreadBatch = [&](AAStoreTargetReader::ThreadBatch& batch,
+                                      size_t begin,
+                                      size_t limit,
+                                      size_t maxBytes,
+                                      unsigned readerThread) {
+            batch.ids.clear();
+            batch.begin = begin;
+            batch.end = begin;
+            batch.candidateBytes = 0;
+            size_t bytes = 0;
+            char keyBuffer[1024];
+            for (size_t query = begin; query < limit; ++query) {
+                char* candidates = resultReader.getData(query, readerThread);
+                if (*candidates != '\0') {
+                    const size_t queryId = qdbr->getId(
+                        resultReader.getDbKey(query));
+                    batch.ids.push_back(queryId);
+                    while (*candidates != '\0') {
+                        Util::parseKey(candidates, keyBuffer);
+                        const size_t targetId = tdbr->getId(
+                            Util::fast_atoi<unsigned int>(keyBuffer));
+                        batch.ids.push_back(targetId);
+                        bytes += static_cast<size_t>(std::min<uint64_t>(
+                            aastoreSequences.sequenceLength(targetId) + 1,
+                            std::numeric_limits<size_t>::max() - bytes));
+                        candidates = Util::skipLine(candidates);
+                    }
+                }
+                batch.end = query + 1;
+                if (bytes >= maxBytes) break;
+            }
+            batch.candidateBytes = bytes;
+        };
+
+        size_t nextThreadBatchQuery = start;
+        std::mutex threadBatchCursorMutex;
+
+#pragma omp parallel reduction(+: threadBatchCount)
         {
             unsigned int thread_idx = 0;
 #ifdef OPENMP
@@ -133,17 +226,20 @@ int doRescorediagonal(Parameters &par,
             resultBuffer.reserve(1000000);
             std::string queryBuffer;
             queryBuffer.reserve(32768);
+            std::string targetBuffer;
+            if (aaStoreDirect) targetBuffer.reserve(32768);
             std::vector<Matcher::result_t> alnResults;
             alnResults.reserve(300);
             std::vector<hit_t> shortResults;
             shortResults.reserve(300);
+            AAStoreTargetReader::ThreadBatch threadBatch;
+            const AAStoreTargetReader::Batch* sequenceBatch = NULL;
             char *queryRevSeq = NULL;
             int queryRevSeqLen = par.maxSeqLen + 1;
             if (reversePrefilterResult == true) {
                 queryRevSeq = static_cast<char*>(malloc(queryRevSeqLen));
             }
-#pragma omp for schedule(dynamic, 1)
-            for (size_t id = start; id < (start + bucketSize); id++) {
+            auto scoreQuery = [&](size_t id) {
                 progress.updateProgress();
 
                 char *data = resultReader.getData(id, thread_idx);
@@ -153,10 +249,32 @@ int doRescorediagonal(Parameters &par,
                 std::string queryToWrap; // needed only for wrapped end-start scoring
                 unsigned int queryId = UINT_MAX;
                 int queryLen = -1, origQueryLen = -1;
-                if(*data !=  '\0'){
-                    queryId = qdbr->getId(queryKey);
-                    querySeq = qdbr->getData(queryId, thread_idx);
-                    queryLen = static_cast<int>(qdbr->getSeqLen(queryId));
+                if(*data != '\0'){
+                    queryId = static_cast<unsigned int>(
+                        qdbr->getId(queryKey));
+                    if (aaStoreDirect) {
+                        try {
+                            aastoreSequences.get(queryId, queryBuffer);
+                        } catch (const std::exception& error) {
+                            Debug(Debug::ERROR) << error.what() << "\n";
+                            EXIT(EXIT_FAILURE);
+                        }
+                        querySeq = queryBuffer.data();
+                        queryLen = static_cast<int>(queryBuffer.size());
+                    } else if (useAAStoreThreadBatch) {
+                        std::string_view sequence;
+                        if (!sequenceBatch->view(
+                                queryId, sequence)) {
+                            Debug(Debug::ERROR)
+                                << "Query sequence is missing from AAStore batch\n";
+                            EXIT(EXIT_FAILURE);
+                        }
+                        querySeq = const_cast<char*>(sequence.data());
+                        queryLen = static_cast<int>(sequence.size());
+                    } else {
+                        querySeq = qdbr->getData(queryId, thread_idx);
+                        queryLen = static_cast<int>(qdbr->getSeqLen(queryId));
+                    }
                     origQueryLen = queryLen;
 
                     if (par.wrappedScoring){
@@ -177,7 +295,7 @@ int doRescorediagonal(Parameters &par,
                             queryRevSeq[(queryLen - 1) - pos] = subMat->num2aa[nuclMatrix->reverseResidue(res)];
                         }
                     }
-                    if (sameQTDB && qdbr->isCompressed()) {
+                    if (!useAAStore && sameQTDB && qdbr->isCompressed()) {
                         queryBuffer.clear();
                         queryBuffer.append(querySeq, queryLen);
                         querySeq = (char *) queryBuffer.c_str();
@@ -190,21 +308,47 @@ int doRescorediagonal(Parameters &par,
                 // -2 because of \n\0 in sequenceDB
 //                }
 
-                std::vector<hit_t> results = QueryMatcher::parsePrefilterHits(data);
+                std::vector<hit_t> results =
+                    QueryMatcher::parsePrefilterHits(data);
                 for (size_t entryIdx = 0; entryIdx < results.size(); entryIdx++) {
+                    const hit_t& prefilterHit = results[entryIdx];
                     char *querySeqToAlign = querySeq;
                     bool isReverse = false;
                     if (reversePrefilterResult) {
-                        if (results[entryIdx].prefScore < 0) {
+                        if (prefilterHit.prefScore < 0) {
                             querySeqToAlign = queryRevSeq;
                             isReverse=true;
                         }
                     }
 
-                    unsigned int targetId = tdbr->getId(results[entryIdx].seqId);
+                    const unsigned int targetId = static_cast<unsigned int>(
+                        tdbr->getId(prefilterHit.seqId));
                     const bool isIdentity = (queryId == targetId && (par.includeIdentity || sameQTDB)) ? true : false;
-                    char *targetSeq = tdbr->getData(targetId, thread_idx);
-                    int dbLen = static_cast<int>(tdbr->getSeqLen(targetId));
+                    char *targetSeq = NULL;
+                    int dbLen = 0;
+                    if (aaStoreDirect) {
+                        try {
+                            aastoreSequences.get(targetId, targetBuffer);
+                        } catch (const std::exception& error) {
+                            Debug(Debug::ERROR) << error.what() << "\n";
+                            EXIT(EXIT_FAILURE);
+                        }
+                        targetSeq = targetBuffer.data();
+                        dbLen = static_cast<int>(targetBuffer.size());
+                    } else if (useAAStoreThreadBatch) {
+                        std::string_view sequence;
+                        if (!sequenceBatch->view(
+                                targetId, sequence)) {
+                            Debug(Debug::ERROR)
+                                << "Target sequence is missing from AAStore batch\n";
+                            EXIT(EXIT_FAILURE);
+                        }
+                        targetSeq = const_cast<char*>(sequence.data());
+                        dbLen = static_cast<int>(sequence.size());
+                    } else {
+                        targetSeq = tdbr->getData(targetId, thread_idx);
+                        dbLen = static_cast<int>(tdbr->getSeqLen(targetId));
+                    }
 
                     float queryLength = static_cast<float>(origQueryLen);
                     float targetLength = static_cast<float>(dbLen);
@@ -223,18 +367,18 @@ int doRescorediagonal(Parameters &par,
                         if (dbLen <= origQueryLen) {
                             alignment = DistanceCalculator::computeUngappedWrappedAlignment(
                                 querySeqToAlign, queryLen, targetSeq, targetLength,
-                                results[entryIdx].diagonal, fastMatrix.matrix, par.rescoreMode);
+                                prefilterHit.diagonal, fastMatrix.matrix, par.rescoreMode);
                         }
                         else{
                             alignment = DistanceCalculator::computeUngappedAlignment(
                                 querySeqToAlign, origQueryLen, targetSeq, targetLength,
-                                results[entryIdx].diagonal, fastMatrix.matrix, par.rescoreMode);
+                                prefilterHit.diagonal, fastMatrix.matrix, par.rescoreMode);
                         }
                     }
                     else {
                         alignment = DistanceCalculator::computeUngappedAlignment(
                                 querySeqToAlign, queryLen, targetSeq, targetLength,
-                                results[entryIdx].diagonal, fastMatrix.matrix, par.rescoreMode);
+                                prefilterHit.diagonal, fastMatrix.matrix, par.rescoreMode);
                     }
                     unsigned int distanceToDiagonal = alignment.distToDiagonal;
                     int diagonalLen = alignment.diagonalLen;
@@ -303,7 +447,7 @@ int doRescorediagonal(Parameters &par,
                                 qStartPos = queryLen - qStartPos - 1;
                                 qEndPos = queryLen - qEndPos - 1;
                             }
-                            result = Matcher::result_t(results[entryIdx].seqId, bitScore, queryCov, targetCov, seqId, evalue, alnLen,
+                            result = Matcher::result_t(prefilterHit.seqId, bitScore, queryCov, targetCov, seqId, evalue, alnLen,
                                                        qStartPos, qEndPos, origQueryLen, dbStartPos, dbEndPos, dbLen, backtrace);
                         }
                     }
@@ -326,13 +470,13 @@ int doRescorediagonal(Parameters &par,
                             alnResults.emplace_back(result);
                         } else if (par.rescoreMode == Parameters::RESCORE_MODE_SUBSTITUTION) {
                             hit_t hit;
-                            hit.seqId = results[entryIdx].seqId;
+                            hit.seqId = prefilterHit.seqId;
                             hit.prefScore = (isReverse) ? -bitScore : bitScore;
                             hit.diagonal = diagonal;
                             shortResults.emplace_back(hit);
                         } else {
                             hit_t hit;
-                            hit.seqId = results[entryIdx].seqId;
+                            hit.seqId = prefilterHit.seqId;
                             hit.prefScore = 100 * seqId;
                             hit.prefScore = (isReverse) ? -hit.prefScore : hit.prefScore;
                             hit.diagonal = diagonal;
@@ -361,15 +505,56 @@ int doRescorediagonal(Parameters &par,
                 resultBuffer.clear();
                 shortResults.clear();
                 alnResults.clear();
+            };
+            if (useAAStoreThreadBatch) {
+                while (true) {
+                    try {
+                        {
+                            std::lock_guard<std::mutex> lock(
+                                threadBatchCursorMutex);
+                            if (nextThreadBatchQuery >= start + bucketSize) {
+                                break;
+                            }
+                            const size_t begin = nextThreadBatchQuery;
+                            collectThreadBatch(
+                                threadBatch, begin, start + bucketSize,
+                                threadBytes, thread_idx);
+                            nextThreadBatchQuery = threadBatch.end;
+                        }
+                        aastoreSequences.fetch_into(threadBatch, par.threads);
+                        ++threadBatchCount;
+                        AAStoreTargetReader::accumulateIoStats(
+                            threadIoStats[thread_idx],
+                            threadBatch.sequences.fetched.stats);
+                        sequenceBatch = &threadBatch.sequences;
+                        for (size_t id = threadBatch.begin;
+                             id < threadBatch.end; ++id) {
+                            scoreQuery(id);
+                        }
+                    } catch (const std::exception& error) {
+                        Debug(Debug::ERROR) << error.what() << "\n";
+                        EXIT(EXIT_FAILURE);
+                    }
+                }
+            } else {
+#pragma omp for schedule(dynamic, 1)
+                for (size_t id = start; id < (start + bucketSize); id++) {
+                    scoreQuery(id);
+                }
             }
             if (reversePrefilterResult == true) {
                 free(queryRevSeq);
             }
         }
+        processedQueries += bucketSize;
         resultReader.remapData();
     }
 
-
+    if (useAAStoreThreadBatch) {
+        Debug(Debug::INFO) << "AAStore rescore thread batches="
+                           << threadBatchCount << "\n";
+        AAStoreTargetReader::logIoStats(threadIoStats);
+    }
     if (tDbrIdx != NULL) {
         delete tDbrIdx;
     }
@@ -432,5 +617,3 @@ int rescorediagonal(int argc, const char **argv, const Command &command) {
     resultReader.close();
     return status;
 }
-
-

@@ -4,6 +4,7 @@
 #include "DBWriter.h"
 #include "Debug.h"
 #include "Util.h"
+#include "AAStoreTargetReader.h"
 
 #include <climits>
 
@@ -24,6 +25,8 @@ int createsubdb(int argc, const char **argv, const Command& command) {
     }
 
     const bool lookupMode = par.dbIdMode == Parameters::ID_MODE_LOOKUP;
+    const std::string aaStorePath =
+        AAStoreTargetReader::associatedStorePath(par.db2);
     int dbMode = DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA;
     if (lookupMode) {
         dbMode |= DBReader<unsigned int>::USE_LOOKUP_REV;
@@ -86,6 +89,9 @@ int createsubdb(int argc, const char **argv, const Command& command) {
     writer.close(shouldMerge, !isOrdered);
     if (par.subDbMode == Parameters::SUBDB_MODE_SOFT) {
         DBReader<unsigned int>::softlinkDb(par.db2, par.db3, DBFiles::DATA);
+    }
+    if (!aaStorePath.empty()) {
+        AAStoreTargetReader::associateDatabase(par.db3, aaStorePath);
     }
     DBWriter::writeDbtypeFile(par.db3.c_str(), reader.getDbtype(), isCompressed);
     DBReader<unsigned int>::softlinkDb(par.db2, par.db3, DBFiles::SEQUENCE_ANCILLARY);

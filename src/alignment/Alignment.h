@@ -6,6 +6,7 @@
 #include "Parameters.h"
 #include "BaseMatrix.h"
 #include "Matcher.h"
+#include "AAStoreTargetReader.h"
 
 class Alignment {
 public:
@@ -118,13 +119,28 @@ private:
 
     DBReader<unsigned int> *prefdbr;
 
+    AAStoreTargetReader aastoreTarget;
+    bool useAAStoreTarget;
+    bool aaStoreDirect;
+
+    bool mapTargetSequence(Sequence& sequence, size_t dbId, unsigned int dbKey,
+                           unsigned int threadIdx, std::string& scratch,
+                           const AAStoreTargetReader::Batch* batch);
+
+    char* getTargetSequenceData(size_t dbId, unsigned int threadIdx,
+                                size_t& seqLen,
+                                std::string& scratch,
+                                const AAStoreTargetReader::Batch* batch);
+
     bool reversePrefilterResult;
 
     static size_t estimateHDDMemoryConsumption(int dbSize, int maxSeqs);
 
     void computeAlternativeAlignment(unsigned int queryDbKey, Sequence &dbSeq,
                                      std::vector<Matcher::result_t> &vector, Matcher &matcher,
-                                     float covThr, float evalThr, int swMode, int thread_idx);
+                                     float covThr, float evalThr, int swMode, int thread_idx,
+                                     std::string& scratch,
+                                     const AAStoreTargetReader::Batch* batch);
 };
 
 #endif

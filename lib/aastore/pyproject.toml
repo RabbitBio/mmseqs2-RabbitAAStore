@@ -1,0 +1,28 @@
+# 文件职责：配置复用 C++ 核心的 Python wheel 与源码包构建。
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=3.0,<4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "aastore"
+version = "0.1.0"
+description = "Compact FASTA storage with parallel random and sequential access"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Operating System :: POSIX :: Linux",
+]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+wheel.packages = ["python/aastore"]
+build.targets = ["_aastore"]
+sdist.include = ["python/**", "pyproject.toml", "tests/python_test.py"]
+sdist.exclude = ["paper/**", "build*/**", "dist/**", "**/__pycache__/**"]
+
+[tool.scikit-build.cmake.define]
+AASTORE_BUILD_PYTHON = "ON"
+AASTORE_BUILD_TESTS = "OFF"
+BUILD_SHARED_LIBS = "OFF"

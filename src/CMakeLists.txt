@@ -53,6 +53,7 @@ target_include_directories(mmseqs-framework PUBLIC linclust)
 target_include_directories(mmseqs-framework PUBLIC taxonomy)
 target_include_directories(mmseqs-framework PUBLIC util)
 target_include_directories(mmseqs-framework PUBLIC .)
+target_include_directories(mmseqs-framework PUBLIC ${AASTORE_INCLUDE_DIR})
 
 add_dependencies(mmseqs-framework generated)
 
@@ -70,10 +71,6 @@ add_dependencies(mmseqs-framework generated)
 
 append_target_property(mmseqs-framework COMPILE_FLAGS ${MMSEQS_CXX_FLAGS} -pedantic -Wall -Wextra -Wdisabled-optimization)
 append_target_property(mmseqs-framework LINK_FLAGS ${MMSEQS_CXX_FLAGS} -pedantic -Wall -Wextra -Wdisabled-optimization)
-if (NOT EMSCRIPTEN)
-    append_target_property(mmseqs-framework COMPILE_FLAGS -fno-exceptions)
-    append_target_property(mmseqs-framework LINK_FLAGS -fno-exceptions)
-endif()
 
 if (ENABLE_WERROR)
     append_target_property(mmseqs-framework COMPILE_FLAGS -Werror -Wno-unused-command-line-argument)
@@ -139,6 +136,8 @@ else ()
 endif ()
 
 target_link_libraries(mmseqs-framework tinyexpr ${ZSTD_LIBRARIES} microtar tantan)
+target_link_libraries(mmseqs-framework ${AASTORE_LIBRARY}
+        ${AASTORE_LIBURING_LIBRARY} stdc++fs)
 # if (CYGWIN)
 #     target_link_libraries(mmseqs-framework nedmalloc)
 # endif ()
@@ -282,6 +281,10 @@ if (NOT FRAMEWORK_ONLY)
     mmseqs_setup_derived_target(mmseqs${EXE_SUFFIX})
     target_link_libraries(mmseqs${EXE_SUFFIX} version)
     install(TARGETS mmseqs${EXE_SUFFIX} DESTINATION bin)
+
+    add_executable(test_aastore_reader EXCLUDE_FROM_ALL test/TestAAStoreReader.cpp)
+    mmseqs_setup_derived_target(test_aastore_reader)
+    target_link_libraries(test_aastore_reader version)
 
     if (HAVE_TESTS)
         add_subdirectory(test)

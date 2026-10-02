@@ -1,5 +1,6 @@
 set(commons_header_files
         commons/A3MReader.h
+        commons/AAStoreTargetReader.h
         commons/AminoAcidLookupTables.h
         commons/BacktraceTranslator.h
         commons/ByteParser.h
@@ -50,6 +51,7 @@ set(commons_header_files
 
 set(commons_source_files
         commons/A3MReader.cpp
+        commons/AAStoreTargetReader.cpp
         commons/Application.cpp
         commons/BaseMatrix.cpp
         commons/Command.cpp
