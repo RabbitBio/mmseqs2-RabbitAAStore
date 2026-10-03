@@ -159,7 +159,7 @@ int doRescorediagonal(Parameters &par,
             << par.threads << "\n";
     }
     if (useAAStoreThreadBatch) {
-        Debug(Debug::INFO) << "AAStore rescorediagonal: thread-local batch_get_into, "
+        Debug(Debug::INFO) << "AAStore rescorediagonal: thread-local get_into, "
                            << "candidate_bytes_per_thread=" << threadBytes
                            << " query_limit=none"
                            << " aastore_threads=1 compute_threads=" << par.threads

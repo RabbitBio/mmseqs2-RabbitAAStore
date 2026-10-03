@@ -304,17 +304,17 @@ struct Store::Impl {
     }
 
     // 创建批次结果并执行通用批量读取流程。
-    Batch batch_get(const std::vector<SequenceId>& ids,
-                    const ReadOptions& options) const {
+    Batch get(const std::vector<SequenceId>& ids,
+              const ReadOptions& options) const {
         Batch batch;
         fill_batch(ids, options, batch);
         return batch;
     }
 
     // 校验输出数组后直接解码到调用方缓冲，仅返回本次读取统计。
-    BatchStats batch_get_into(const std::vector<SequenceId>& ids,
-                              char* const* outputs, size_t output_count,
-                              const ReadOptions& options) const {
+    BatchStats get_into(const std::vector<SequenceId>& ids,
+                        char* const* outputs, size_t output_count,
+                        const ReadOptions& options) const {
         if (output_count != ids.size()) {
             throw std::invalid_argument("batch output count does not match IDs");
         }
@@ -406,20 +406,30 @@ struct Store::Impl {
         preload_ns_ = elapsed_ns(preload_start);
     }
 
+    // 持有 meta.bin 的只读映射，提供序列数和字符边界查询。
     Metadata metadata_;
+    // 打开 Store 时确定的驻留模式，决定读取从文件、前缀还是全量内存取数据。
     StorageMode storage_mode_ = StorageMode::ByteRange;
+    // 本对象拥有的 packed.bin 描述符；全量预加载后关闭并置为 -1。
     int packed_descriptor_ = -1;
+    // 可选名称列读取器，列文件不存在时为空。
     std::unique_ptr<TextColumn> names_;
+    // 可选描述列读取器，与名称列拥有独立的数据和索引。
     std::unique_ptr<TextColumn> descriptions_;
+    // PrefixMemory 模式保留的 packed 文件连续前缀，读取期间内容不变。
     std::vector<uint8_t, NoInitAllocator<uint8_t>> prefix_packed_;
+    // FullMemory 模式保留的完整 packed 数据，尚未解码为字符。
     std::vector<uint8_t, NoInitAllocator<uint8_t>> full_packed_;
+    // packed 前缀或全量数据预加载的墙钟耗时，单位纳秒。
     uint64_t preload_ns_ = 0;
 };
 
 // 打开给定路径的存储并按选项初始化其内部实现。
 Store::Store(const std::filesystem::path& path,
-             const StoreOptions& options)
-    : impl_(std::make_unique<Impl>(path, options)) {}
+             const StoreOptions& options) {
+    options.validate();
+    impl_ = std::make_unique<Impl>(path, options);
+}
 
 // 销毁 Store 及其持有的文件和缓存资源。
 Store::~Store() = default;
@@ -477,11 +487,9 @@ const char* Store::decode_kernel_name() const noexcept {
     return packed_5bit_decode_kernel_name();
 }
 
-// 解码并返回指定 ID 的单个序列。
-std::string Store::get(SequenceId id) const {
-    std::string output;
-    impl_->get_into(id, output);
-    return output;
+// 单条请求复用批量读取语义；仅有一个请求时不执行排序或启动额外工作线程。
+Batch Store::get(SequenceId id, const ReadOptions& options) const {
+    return get(std::vector<SequenceId>{id}, options);
 }
 
 // 把指定序列解码到可自动调整大小的字符串中。
@@ -490,29 +498,38 @@ void Store::get_into(SequenceId id, std::string& output) const {
 }
 
 // 按请求顺序批量读取并返回序列。
-Batch Store::batch_get(const std::vector<SequenceId>& ids,
-                       const ReadOptions& options) const {
-    return impl_->batch_get(ids, options);
+Batch Store::get(const std::vector<SequenceId>& ids,
+                 const ReadOptions& options) const {
+    options.validate();
+    return impl_->get(ids, options);
+}
+
+// 将花括号列表转为显式 ID 数组，避免空列表被当作单条 ID。
+Batch Store::get(std::initializer_list<SequenceId> ids,
+                 const ReadOptions& options) const {
+    return get(std::vector<SequenceId>(ids), options);
 }
 
 // 把序列直接写入逐条输出地址，保留输入顺序并返回读取统计。
-BatchStats Store::batch_get_into(const std::vector<SequenceId>& ids,
-                                 char* const* outputs, size_t output_count,
-                                 const ReadOptions& options) const {
-    return impl_->batch_get_into(ids, outputs, output_count, options);
+BatchStats Store::get_into(const std::vector<SequenceId>& ids,
+                           char* const* outputs, size_t output_count,
+                           const ReadOptions& options) const {
+    options.validate();
+    return impl_->get_into(ids, outputs, output_count, options);
 }
 
 // 将指针 vector 转交给带显式数量的直接输出接口。
-BatchStats Store::batch_get_into(const std::vector<SequenceId>& ids,
-                                 const std::vector<char*>& outputs,
-                                 const ReadOptions& options) const {
-    return batch_get_into(ids, outputs.data(), outputs.size(), options);
+BatchStats Store::get_into(const std::vector<SequenceId>& ids,
+                           const std::vector<char*>& outputs,
+                           const ReadOptions& options) const {
+    return get_into(ids, outputs.data(), outputs.size(), options);
 }
 
 // 读取连续 ID 区间并返回字符序列批次。
 Batch Store::sequential_get(SequenceId first_sequence,
                             SequenceId end_sequence,
                             const ReadOptions& options) const {
+    options.validate();
     return impl_->sequential_get(
         first_sequence, end_sequence, options);
 }
@@ -522,6 +539,7 @@ BatchStats Store::sequential_get_into(SequenceId first_sequence,
                                       SequenceId end_sequence,
                                       char* const* outputs, size_t output_count,
                                       const ReadOptions& options) const {
+    options.validate();
     return impl_->sequential_get_into(
         first_sequence, end_sequence, outputs, output_count, options);
 }
@@ -540,6 +558,7 @@ RecordBatch Store::batch_get_records(
         const std::vector<SequenceId>& ids,
         RecordFields fields,
         const ReadOptions& options) const {
+    options.validate();
     constexpr uint8_t known_fields =
         static_cast<uint8_t>(RecordFields::All);
     if ((static_cast<uint8_t>(fields) & ~known_fields) != 0) {
@@ -555,7 +574,7 @@ RecordBatch Store::batch_get_records(
         batch.descriptions = impl_->batch_get_descriptions(ids, options);
     }
     if (has_field(fields, RecordFields::Sequence)) {
-        batch.sequences = impl_->batch_get(ids, options);
+        batch.sequences = impl_->get(ids, options);
     }
     return batch;
 }

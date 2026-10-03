@@ -46,8 +46,11 @@ bool is_normalized_residue(unsigned char value) {
     return (value >= 'A' && value <= 'Z') || value == '*' || value == '-';
 }
 
+// 扫描一段输入得到的换行位置及规范化状态，不拥有输入数据。
 struct SequenceChunkScan {
+    // 输入段中首个换行的借用指针；nullptr 表示本段未找到换行。
     const char* newline = nullptr;
+    // 换行前的字符（无换行时为整段）是否无需大小写或非法字符转换。
     bool normalized = true;
 };
 
@@ -167,6 +170,7 @@ SequenceChunkScanner detect_sequence_chunk_scanner() {
 
 }  // namespace
 
+// 有缓冲的 FASTA 行读取状态；普通行借用读缓冲，跨块长行存入拼接区。
 class FastaLineReader::Impl {
 public:
     // 打开顺序输入文件，分配读取缓冲并向内核提供顺序访问提示。
@@ -248,12 +252,19 @@ public:
     }
 
 private:
+    // 本对象持有的 FASTA 输入文件描述符，析构时关闭。
     int descriptor_ = -1;
+    // read 系统调用填充的固定大小字节缓冲。
     std::vector<char> buffer_;
+    // 跨越多个读缓冲的行片段；下一次 next 调用时清空。
     std::string spill_;
+    // buffer_ 中下一未消费字节的下标。
     size_t begin_ = 0;
+    // buffer_ 有效数据末尾的下一下标，未消费区间为 [begin_, end_)。
     size_t end_ = 0;
+    // read 是否已经返回零；此时仍可能需要返回 spill_ 中的最后一行。
     bool eof_ = false;
+    // 根据 CPU 能力选定的扫描函数，同时定位换行和检查规范化状态。
     SequenceChunkScanner sequence_scanner_ =
         detect_sequence_chunk_scanner();
 };

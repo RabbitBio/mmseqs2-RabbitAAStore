@@ -42,9 +42,13 @@ private:
     // 写出当前缓冲内容，并将缓冲的有效长度归零。
     void flush_buffer();
 
+    // 输出路径，用于在写入或关闭失败时报告具体文件。
     std::filesystem::path path_;
+    // 本对象持有的可写文件描述符；-1 表示未打开或已经关闭。
     int descriptor_ = -1;
+    // 固定大小的顺序写缓冲，暂存尚未调用 write 写出的字节。
     std::vector<char> buffer_;
+    // buffer_ 中待写出的有效字节数，范围为 [0, buffer_.size()]。
     size_t buffered_ = 0;
 };
 
@@ -76,18 +80,31 @@ private:
     // 将缓存的序列块内偏移批量写出，保留缓冲容量供后续复用。
     void flush_offsets();
 
+    // 每块边界数的 log2，用移位和掩码定位块边界。
     static constexpr uint64_t kBlockShift = 12;
+    // 每 4096 个边界共享一个 64 位字符基址。
     static constexpr uint64_t kBlockSize = uint64_t{1} << kBlockShift;
+    // AAPCMP3 文件头预留字节数，finish 时回填。
     static constexpr size_t kHeaderBytes = 8 + 9 * sizeof(uint64_t);
+    // 每次批量写出的 32 位偏移项数上限，不是字节数。
     static constexpr size_t kBufferEntries = 2 * 1024 * 1024;
+    // finish 成功后发布元数据的目标路径。
     std::filesystem::path final_path_;
+    // 写入中的临时路径，未成功发布时由析构清理。
     std::filesystem::path temporary_path_;
+    // 临时文件流，顺序写数据并在结束时回填文件头。
     std::fstream output_;
+    // 尚未刷出的 32 位块内字符偏移；刷出后复用容量。
     std::vector<uint32_t> offsets_;
+    // 累计的 64 位块字符基址，结束时写在偏移数组之后。
     std::vector<uint64_t> bases_;
+    // 已接收边界数，包含最初的零边界和各序列的结束边界。
     uint64_t position_count_ = 0;
+    // 最近一次追加的全局字符位置，用于检查单调性和末尾长度。
     uint64_t last_position_ = 0;
+    // 当前块的全局字符基址，新边界减去它得到 32 位偏移。
     uint64_t current_base_ = 0;
+    // 元数据是否已成功完成并发布，决定析构是否清理临时文件。
     bool finished_ = false;
 };
 
@@ -120,18 +137,31 @@ private:
     // 将缓存的文本块内偏移批量写出并清空有效内容。
     void flush_offsets();
 
+    // 每块文本边界数的 log2，与序列索引使用相同分块粒度。
     static constexpr uint64_t kBlockShift = 12;
+    // 每 4096 个边界共享一个 64 位字节基址。
     static constexpr uint64_t kBlockSize = uint64_t{1} << kBlockShift;
+    // AATEXT1 文件头预留字节数，finish 时回填。
     static constexpr size_t kHeaderBytes = 8 + 6 * sizeof(uint64_t);
+    // 偏移写缓冲最多容纳的 uint32_t 项数。
     static constexpr size_t kBufferEntries = 2 * 1024 * 1024;
+    // 完成后发布的文本索引路径，例如 names.meta。
     std::filesystem::path final_path_;
+    // 构建中的临时索引路径，失败时删除。
     std::filesystem::path temporary_path_;
+    // 用于写偏移、块基址和回填文件头的临时文件流。
     std::fstream output_;
+    // 尚未刷出的块内字节偏移，单位与序列索引的字符偏移不同。
     std::vector<uint32_t> offsets_;
+    // 各块在文本数据文件中的 64 位字节基址。
     std::vector<uint64_t> bases_;
+    // 已接收的文本边界数，包含起始零边界。
     uint64_t position_count_ = 0;
+    // 最近一次追加的文本结束字节位置。
     uint64_t last_position_ = 0;
+    // 当前块的文本字节基址，用于计算新边界的相对偏移。
     uint64_t current_base_ = 0;
+    // 是否已成功发布文件；成功后析构不再尝试清理临时文件。
     bool finished_ = false;
 };
 

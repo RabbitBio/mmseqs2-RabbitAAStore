@@ -1,8 +1,9 @@
-// 文件职责：对序列请求排序，计算 5 位编码物理范围并按稀疏或扫描策略合并。
+// 文件职责：对序列请求排序，计算 5 位编码物理范围并按间隙和大小限制合并。
 // 在减少请求数量和限制额外读取之间按参数取舍，同时汇总范围与字节统计。
 #include "byte_range_planner.hpp"
 
 #include "aastore/store.hpp"
+#include "thread_helpers.hpp"
 
 #include <algorithm>
 #include <array>
@@ -30,12 +31,13 @@ uint64_t saturating_add(uint64_t left, uint64_t right) {
 template <typename Function>
 void run_parallel(size_t worker_count, Function function) {
     std::vector<std::thread> workers;
+    ThreadJoinGuard join_guard(workers);
     workers.reserve(worker_count - 1);
     for (size_t worker = 1; worker < worker_count; ++worker) {
         workers.emplace_back([&function, worker] { function(worker); });
     }
     function(size_t{0});
-    for (std::thread& worker : workers) worker.join();
+    join_guard.join_all();
 }
 
 // 将带上下文的函数指针适配到索引并行执行器，由调用线程参与执行。
@@ -59,58 +61,6 @@ void summarize_ranges(ReadPlan& plan) {
     }
 }
 
-// 按稀疏或扫描策略合并范围，并保留请求覆盖关系。
-ReadPlan coalesce_sparse_ranges(ReadPlan sparse,
-                                ReadStrategy strategy,
-                                uint64_t scan_max_range_bytes) {
-    const size_t count = sparse.ranges.size();
-    if (count <= 1 || strategy == ReadStrategy::Sparse) {
-        sparse.sparse_ranges = count;
-        return sparse;
-    }
-
-    std::vector<size_t> group_starts;
-    size_t begin = 0;
-    while (begin < count) {
-        size_t end = begin + 1;
-        while (end < count) {
-            const uint64_t span =
-                sparse.ranges[end].end - sparse.ranges[begin].begin;
-            if (scan_max_range_bytes != 0 &&
-                span > scan_max_range_bytes) {
-                break;
-            }
-            ++end;
-        }
-        group_starts.push_back(begin);
-        begin = end;
-    }
-    group_starts.push_back(count);
-
-    ReadPlan result;
-    result.requested_residues = sparse.requested_residues;
-    result.unique_packed_bytes = sparse.unique_packed_bytes;
-    result.merged_gaps = sparse.merged_gaps;
-    result.free_merges = sparse.free_merges;
-    result.ranges.reserve(group_starts.size() - 1);
-    for (size_t group = 0; group + 1 < group_starts.size(); ++group) {
-        const size_t begin = group_starts[group];
-        const size_t end = group_starts[group + 1];
-        const ByteRange& first = sparse.ranges[begin];
-        const ByteRange& last = sparse.ranges[end - 1];
-        result.ranges.push_back(ByteRange{
-            first.begin, last.end, first.request_begin, last.request_end});
-        if (end - begin == 1) {
-            ++result.sparse_ranges;
-        } else {
-            ++result.scan_ranges;
-            result.merged_gaps += end - begin - 1;
-        }
-    }
-    summarize_ranges(result);
-    return result;
-}
-
 // 顺序遍历按物理位置有序的请求，生成受间隙和大小限制的稀疏范围。
 ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
                                    const ReadOptions& options) {
@@ -125,7 +75,8 @@ ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
         if (request.length == 0) continue;
         const PackedByteExtent extent = packed_byte_extent(request);
 
-        if (!have_coverage || extent.end > covered_end) {
+        if (options.collect_diagnostics &&
+            (!have_coverage || extent.end > covered_end)) {
             const uint64_t uncovered_begin = have_coverage
                 ? std::max(extent.begin, covered_end)
                 : extent.begin;
@@ -155,8 +106,10 @@ ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
         if (!plan.ranges.empty() && within_size_limit &&
             (free_merge || gap <= options.merge_gap_bytes)) {
             ByteRange& range = plan.ranges.back();
-            if (free_merge) ++plan.free_merges;
-            if (gap != 0) ++plan.merged_gaps;
+            if (options.collect_diagnostics) {
+                if (free_merge) ++plan.free_merges;
+                if (gap != 0) ++plan.merged_gaps;
+            }
             range.end = merged_end;
             range.request_end = i + 1;
         } else {
@@ -167,8 +120,11 @@ ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
     return plan;
 }
 
+// 并行规划时紧凑保存非空请求的 packed 区间，原请求下标由旁边的数组关联。
 struct PlannerExtent {
+    // 该请求在 packed.bin 中的起始字节偏移。
     uint64_t begin;
+    // 结束字节偏移，不含此位置。
     uint64_t end;
 };
 
@@ -232,30 +188,32 @@ ReadPlan plan_sparse_ranges_parallel(const SequenceRequests& requests,
     });
 
     worker_count = std::min(worker_count, valid_count);
-    std::vector<uint64_t> unique_totals(worker_count, 0);
-    run_parallel(worker_count, [&](size_t worker) {
-        const size_t begin = valid_count * worker / worker_count;
-        const size_t end = valid_count * (worker + 1) / worker_count;
-        uint64_t unique = 0;
-        for (size_t i = begin; i < end; ++i) {
-            const PlannerExtent& extent = extents[i];
-            if (i == 0) {
-                unique = extent.end - extent.begin;
-                continue;
+    if (options.collect_diagnostics) {
+        std::vector<uint64_t> unique_totals(worker_count, 0);
+        run_parallel(worker_count, [&](size_t worker) {
+            const size_t begin = valid_count * worker / worker_count;
+            const size_t end = valid_count * (worker + 1) / worker_count;
+            uint64_t unique = 0;
+            for (size_t i = begin; i < end; ++i) {
+                const PlannerExtent& extent = extents[i];
+                if (i == 0) {
+                    unique = extent.end - extent.begin;
+                    continue;
+                }
+                const uint64_t previous_end = extents[i - 1].end;
+                if (extent.end > previous_end) {
+                    unique = saturating_add(
+                        unique,
+                        extent.end - std::max(extent.begin, previous_end));
+                }
             }
-            const uint64_t previous_end = extents[i - 1].end;
-            if (extent.end > previous_end) {
-                unique = saturating_add(
-                    unique,
-                    extent.end - std::max(extent.begin, previous_end));
-            }
-        }
-        unique_totals[worker] = unique;
-    });
+            unique_totals[worker] = unique;
+        });
 
-    for (size_t worker = 0; worker < worker_count; ++worker) {
-        plan.unique_packed_bytes = saturating_add(
-            plan.unique_packed_bytes, unique_totals[worker]);
+        for (size_t worker = 0; worker < worker_count; ++worker) {
+            plan.unique_packed_bytes = saturating_add(
+                plan.unique_packed_bytes, unique_totals[worker]);
+        }
     }
 
     plan.ranges.reserve(std::min<size_t>(valid_count, 65536));
@@ -283,8 +241,10 @@ ReadPlan plan_sparse_ranges_parallel(const SequenceRequests& requests,
             merged_end - previous.begin <= max_range_bytes;
         if (within_size_limit &&
             (free_merge || gap <= options.merge_gap_bytes)) {
-            if (free_merge) ++plan.free_merges;
-            if (gap != 0) ++plan.merged_gaps;
+            if (options.collect_diagnostics) {
+                if (free_merge) ++plan.free_merges;
+                if (gap != 0) ++plan.merged_gaps;
+            }
             previous.end = merged_end;
             previous.request_end = request_index + 1;
         } else {
@@ -299,8 +259,11 @@ constexpr unsigned kRadixBits = 11;
 constexpr size_t kRadix = size_t{1} << kRadixBits;
 constexpr uint32_t kRadixMask = static_cast<uint32_t>(kRadix - 1);
 
+// 基数排序使用的 8 字节轻量键，避免每轮都搬运完整 SequenceRequest。
 struct CompactKey {
+    // 可用 32 位表示的序列 ID，作为排序键。
     uint32_t sequence_id;
+    // 完整请求在排序前 requests 数组中的下标，最后一轮用来恢复请求。
     uint32_t request_index;
 };
 
@@ -308,17 +271,29 @@ static_assert(sizeof(CompactKey) == 8);
 
 using RadixCounts = std::vector<std::array<size_t, kRadix>>;
 
+// 一轮并行基数排序借用的输入、输出和桶数组；线程各自更新对应的桶行。
 struct RadixContext {
+    // 完整请求数组；紧凑键路径保持原顺序，普通路径每轮交换输入输出。
     SequenceRequests* requests = nullptr;
+    // 普通路径本轮写入的请求暂存区，下一轮与 requests 交换。
     SequenceRequests* scratch = nullptr;
+    // 紧凑键路径最后一轮还原完整请求的目标数组。
     SequenceRequests* sorted_requests = nullptr;
+    // 紧凑键路径本轮读取的排序键数组。
     std::vector<CompactKey>* keys = nullptr;
+    // 紧凑键路径下一轮的排序键输出数组。
     std::vector<CompactKey>* scratch_keys = nullptr;
+    // [线程][桶] 计数，记录各线程输入分片落入每个桶的项数。
     RadixCounts* counts = nullptr;
+    // [线程][桶] 输出位置；前缀和初始化后，各线程递增自己的行。
     RadixCounts* positions = nullptr;
+    // 本轮分片线程数，用于按请求数量划分输入。
     size_t thread_count = 1;
+    // 本轮使用的 ID 位段起点，右移后再取 kRadixBits 位作为桶号。
     unsigned shift = 0;
+    // 是否只排序 CompactKey；false 时直接搬运完整请求。
     bool compact = false;
+    // 是否为紧凑键路径的最后一轮，此轮直接输出完整请求。
     bool final_pass = false;
 };
 
@@ -475,7 +450,7 @@ void sort_requests_by_sequence_id(SequenceRequests& requests,
     }
 }
 
-// 为已按序列 ID 排序的请求生成读计划，再应用配置的范围合并策略。
+// 为已按序列 ID 排序的请求生成稀疏读计划，并汇总读取范围。
 ReadPlan plan_byte_ranges(const SequenceRequests& requests,
                           const ReadOptions& options) {
     const size_t worker_count = requests.size() >= 65536
@@ -486,9 +461,7 @@ ReadPlan plan_byte_ranges(const SequenceRequests& requests,
         : plan_sparse_ranges_parallel(requests, options, worker_count);
 
     summarize_ranges(plan);
-    return coalesce_sparse_ranges(
-        std::move(plan), options.read_strategy,
-        options.scan_max_range_bytes);
+    return plan;
 }
 
 }  // namespace aastore

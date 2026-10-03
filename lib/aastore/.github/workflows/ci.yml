@@ -1,0 +1,129 @@
+name: Library CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: library-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp:
+    name: C++ shared=${{ matrix.shared }} io_uring=${{ matrix.io_uring }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shared: ["OFF", "ON"]
+        io_uring: ["OFF", "ON"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install optional I/O dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y liburing-dev
+      - name: Configure and build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=${{ matrix.shared }} \
+            -DAASTORE_ENABLE_IO_URING=${{ matrix.io_uring }} \
+            -DAASTORE_BUILD_TESTS=ON \
+            -DAASTORE_BUILD_TOOLS=ON \
+            -DAASTORE_BUILD_BENCHMARKS=ON \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/aastore-prefix"
+          cmake --build build --parallel 2
+      - name: Test library
+        run: ctest --test-dir build --output-on-failure
+      - name: Install and move the SDK
+        run: |
+          cmake --install build
+          mv "$RUNNER_TEMP/aastore-prefix" "$RUNNER_TEMP/aastore-relocated"
+      - name: Build and test an external consumer
+        run: |
+          cmake -S tests/install_consumer -B "$RUNNER_TEMP/aastore-consumer" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/aastore-relocated"
+          cmake --build "$RUNNER_TEMP/aastore-consumer" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/aastore-consumer" --output-on-failure
+          cmake -S examples/cpp -B "$RUNNER_TEMP/aastore-example" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/aastore-relocated"
+          cmake --build "$RUNNER_TEMP/aastore-example" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/aastore-example" --output-on-failure
+
+  python:
+    name: Python ${{ matrix.python }} source distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Build the source distribution
+        run: |
+          python -m pip install build
+          python -m build --sdist --outdir dist
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import tarfile
+
+          with tarfile.open(next(Path("dist").glob("*.tar.gz"))) as source:
+              paths = [PurePosixPath(member.name) for member in source.getmembers()]
+              assert all(len(path.parts) >= 2 for path in paths)
+              assert not any(
+                  path.parts[1] in {"paper", "dist", ".git"}
+                  or path.parts[1].startswith(("build", "cmake-build-"))
+                  or "__pycache__" in path.parts
+                  for path in paths
+              )
+          PY
+      - name: Build the wheel from the source distribution
+        run: |
+          mkdir sdist
+          tar -xzf dist/*.tar.gz -C sdist
+          python -m build --wheel --outdir wheelhouse "sdist/aastore-$(cat VERSION)"
+          python -m pip install --no-deps wheelhouse/*.whl
+      - name: Check the installed package and dependencies
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          import subprocess
+          import zipfile
+          import aastore
+          import aastore._aastore as extension
+
+          assert aastore.__version__ == version("aastore") == Path("VERSION").read_text().strip()
+          with zipfile.ZipFile(next(Path("wheelhouse").glob("*.whl"))) as wheel:
+              names = wheel.namelist()
+              assert "aastore/__init__.pyi" in names and "aastore/py.typed" in names
+              license_path = f"aastore-{aastore.__version__}.dist-info/licenses/LICENSE"
+              assert wheel.read(license_path) == Path("LICENSE").read_bytes()
+              assert all(name.startswith("aastore/") or ".dist-info/" in name for name in names)
+          dependencies = subprocess.check_output(["ldd", extension.__file__], text=True)
+          print(dependencies)
+          assert "liburing" not in dependencies
+          PY
+      - name: Test the installed wheel
+        run: |
+          source_dir="$GITHUB_WORKSPACE/sdist/aastore-$(cat VERSION)"
+          cd "$RUNNER_TEMP"
+          python "$source_dir/tests/python_test.py"
+          python "$source_dir/examples/python/basic.py"
+          python "$source_dir/examples/python/buffer_layout.py"

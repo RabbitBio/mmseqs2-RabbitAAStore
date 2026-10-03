@@ -28,7 +28,9 @@ public:
     bool next(std::string_view& line, bool& normalized_sequence);
 
 private:
+    // 隐藏文件描述符、读取位置和跨缓冲行拼接状态的实现类型。
     class Impl;
+    // 独占读取实现；next 返回的视图借用该实现中的缓冲。
     std::unique_ptr<Impl> impl_;
 };
 

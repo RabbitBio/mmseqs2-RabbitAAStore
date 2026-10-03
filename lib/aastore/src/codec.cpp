@@ -15,9 +15,13 @@
 namespace aastore {
 namespace {
 
+// 运行时选择的 5 位数据解码实现，使用前先检查 CPU 是否支持对应指令集。
 enum class DecodeKernel : uint8_t {
+    // 通用标量实现，不要求 AVX 指令。
     Scalar32,
+    // 使用 AVX2 与 BMI2 指令的向量解码实现。
     Avx2Bmi2,
+    // 使用 AVX-512 VBMI2 等指令的向量解码实现。
     Avx512Vbmi2
 };
 

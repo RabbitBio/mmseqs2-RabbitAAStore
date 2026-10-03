@@ -63,7 +63,7 @@ struct RunContext {
 void run_worker(RunContext* ctx, size_t thread) {
     uint64_t checksum = 0;
     if (!ctx->use_windows) {
-        const aastore::Batch batch = ctx->store->batch_get(
+        const aastore::Batch batch = ctx->store->get(
             (*ctx->requests)[thread], *ctx->options);
         add((*ctx->totals)[thread], batch.stats);
         for (size_t index = 0; index < batch.size(); ++index) {

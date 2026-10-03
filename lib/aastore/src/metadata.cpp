@@ -78,7 +78,10 @@ uint64_t Metadata::start_position(uint64_t index) const {
         throw std::out_of_range("sequence index out of range");
     }
     const uint64_t block = index >> block_shift_;
-    return bases_[block] + offsets_[index];
+    uint64_t base = 0;
+    // 偏移数组长度可能使块基址仅四字节对齐，使用 memcpy 保持现有磁盘布局。
+    std::memcpy(&base, bases_ + block * sizeof(base), sizeof(base));
+    return base + offsets_[index];
 }
 
 // 读取并校验唯一支持的 AAPCMP3 元数据格式。
@@ -142,8 +145,7 @@ void Metadata::open(const std::filesystem::path& store) {
     mapping_ = map_read_only(path, mapping_bytes_);
     const char* base = static_cast<const char*>(mapping_);
     offsets_ = reinterpret_cast<const uint32_t*>(base + kHeaderBytes);
-    bases_ = reinterpret_cast<const uint64_t*>(
-        base + kHeaderBytes + offsets_bytes);
+    bases_ = base + kHeaderBytes + offsets_bytes;
     block_shift_ = static_cast<uint32_t>(block_shift);
     sequence_count_ = sequence_count;
     total_residues_ = total_residues;

@@ -97,6 +97,7 @@ std::filesystem::path parent_directory(
 BuildStats build_fasta(const std::filesystem::path& fasta,
                        const std::filesystem::path& store,
                        const BuildOptions& options) {
+    options.validate();
     const bool write_text_columns =
         options.write_names || options.write_descriptions;
     const BuildThreadPlan threads =

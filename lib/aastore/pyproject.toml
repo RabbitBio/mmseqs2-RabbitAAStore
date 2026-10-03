@@ -5,11 +5,13 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "aastore"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Compact FASTA storage with parallel random and sequential access"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.9"
 classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
     "Programming Language :: C++",
     "Operating System :: POSIX :: Linux",
@@ -19,10 +21,45 @@ classifiers = [
 minimum-version = "0.10"
 wheel.packages = ["python/aastore"]
 build.targets = ["_aastore"]
-sdist.include = ["python/**", "pyproject.toml", "tests/python_test.py"]
-sdist.exclude = ["paper/**", "build*/**", "dist/**", "**/__pycache__/**"]
+install.components = ["Python"]
+# Includes take precedence over excludes and use gitignore-style matching.
+# Anchor them at the project root so nested README/CMake files cannot pull
+# paper or local build trees into the source distribution.
+sdist.include = [
+    "/VERSION", "/CMakeLists.txt", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/pyproject.toml",
+    "/include/**", "/src/**", "/cmake/**", "/python/**", "/examples/**",
+    "/docs/**", "/tests/**", "/tools/**", "/benchmarks/**",
+    "!**/__pycache__/**", "!**/*.py[cod]",
+]
+sdist.exclude = ["/paper/", "/build*/", "/cmake-build-*/", "/dist/", "__pycache__/"]
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "VERSION"
+regex = '^(?P<value>[0-9]+\.[0-9]+\.[0-9]+)\s*$'
 
 [tool.scikit-build.cmake.define]
 AASTORE_BUILD_PYTHON = "ON"
 AASTORE_BUILD_TESTS = "OFF"
+AASTORE_BUILD_TOOLS = "OFF"
+AASTORE_BUILD_BENCHMARKS = "OFF"
+# Portable wheels use pread and have no system liburing dependency. Source
+# builds can opt in with -Ccmake.define.AASTORE_ENABLE_IO_URING=ON.
+AASTORE_ENABLE_IO_URING = "OFF"
 BUILD_SHARED_LIBS = "OFF"
+
+[tool.cibuildwheel]
+# Supported wheels: standard CPython 3.9-3.13 on Linux x86_64 with glibc.
+build = "cp{39,310,311,312,313}-manylinux_x86_64"
+archs = ["x86_64"]
+test-command = [
+    "python {package}/tests/python_test.py",
+    "python {package}/examples/python/basic.py",
+    "python {package}/examples/python/buffer_layout.py",
+]
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux2014"
+
+[tool.cibuildwheel.config-settings]
+"cmake.define.AASTORE_ENABLE_IO_URING" = "OFF"

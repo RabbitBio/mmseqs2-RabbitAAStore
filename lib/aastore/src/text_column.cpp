@@ -1,9 +1,10 @@
 // 文件职责：读取名称或描述列，校验文本索引并按请求合并范围、复制结果。
-// 支持常驻映射以及 pread、io_uring 读取，文本结果无需经过序列编解码器。
+// 支持自有内存中的常驻数据以及 pread、io_uring 读取，文本结果无需经过序列编解码器。
 #include "text_column.hpp"
 
 #include "byte_range_planner.hpp"
 #include "io_uring_backend.hpp"
+#include "thread_helpers.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -53,19 +54,31 @@ void pread_exact(int descriptor, void* output, uint64_t bytes,
     }
 }
 
+// 一条名称或描述读取请求，同时记录源文件字节范围与结果中的输出位置。
 struct TextRequest {
+    // 文本记录 ID，与对应序列 ID 一致，用作排序键。
     SequenceId id = 0;
+    // 保留的原输入下标；当前复制路径直接使用 output_offset 定位输出。
     size_t original_index = 0;
+    // 文本数据文件中该记录的起始字节偏移。
     uint64_t begin = 0;
+    // 文本结束字节偏移，不含此位置；等于 begin 时为空文本。
     uint64_t end = 0;
+    // 该记录在 TextBatch::storage 中的字节偏移，排序后保持不变。
     uint64_t output_offset = 0;
 };
 
+// 单列文本的有序读取计划，复用 ByteRange，但源数据是不压缩的文本字节。
 struct TextPlan {
+    // 合并后的文件区间及其覆盖的有序文本请求下标。
     std::vector<ByteRange> ranges;
+    // 诊断开启时统计请求文件区间并集的字节数，不重复统计相同记录。
     uint64_t unique_bytes = 0;
+    // 所有合并范围的字节总数，包含跨过的未请求文本。
     uint64_t read_bytes = 0;
+    // 诊断开启时统计合并跨越文件间隙的次数。
     uint64_t merged_gaps = 0;
+    // 最大单范围字节数，用于约束 io_uring 缓冲预算下的深度。
     uint64_t max_range_bytes = 0;
 };
 
@@ -78,7 +91,8 @@ TextPlan plan_ranges(const std::vector<TextRequest>& requests,
     for (size_t i = 0; i < requests.size(); ++i) {
         const TextRequest& request = requests[i];
         if (request.begin == request.end) continue;
-        if (!covered || request.end > covered_end) {
+        if (options.collect_diagnostics &&
+            (!covered || request.end > covered_end)) {
             plan.unique_bytes += request.end -
                 (covered ? std::max(request.begin, covered_end) : request.begin);
             covered_end = request.end;
@@ -102,7 +116,7 @@ TextPlan plan_ranges(const std::vector<TextRequest>& requests,
         if (!plan.ranges.empty() && within_cap &&
             (overlaps || gap <= options.merge_gap_bytes)) {
             ByteRange& range = plan.ranges.back();
-            if (!overlaps) ++plan.merged_gaps;
+            if (options.collect_diagnostics && !overlaps) ++plan.merged_gaps;
             range.end = merged_end;
             range.request_end = i + 1;
         } else {
@@ -124,9 +138,13 @@ bool text_request_less(const TextRequest& left,
     return left.id < right.id;
 }
 
+// 已读文本范围的回填上下文，由 pread 和 io_uring 完成路径共用。
 struct TextCopyContext {
+    // 用 range_index 查询范围边界以及关联的文本请求。
     const TextPlan* plan = nullptr;
+    // 借用的有序请求列表，每条请求保留自己的输出位置。
     const std::vector<TextRequest>* requests = nullptr;
+    // 调用方持有的结果批次，各任务只复制到自己的输出区间。
     TextBatch* batch = nullptr;
 };
 
@@ -148,11 +166,17 @@ void copy_text_range(void* opaque, size_t, size_t range_index,
     }
 }
 
+// 文本 pread 工作线程的共享读取状态，按范围动态分配任务。
 struct TextReadContext {
+    // 借用的名称或描述数据文件描述符。
     int descriptor = -1;
+    // 要读取的有序文本范围计划，执行期间只读。
     const TextPlan* plan = nullptr;
+    // 读取后用于把各条文本复制到结果批次的共享上下文。
     TextCopyContext* copy = nullptr;
+    // 原子领取的下一范围下标，由调用方持有。
     std::atomic<size_t>* next_range = nullptr;
+    // 各线程独占写入自己的异常槽位，join 后由调用线程检查。
     std::vector<std::exception_ptr>* errors = nullptr;
 };
 
@@ -179,8 +203,9 @@ void read_text_ranges(TextReadContext* ctx, size_t worker) noexcept {
 
 }  // namespace
 
+// 文本列资源所有者：映射 AATEXT1 索引，按配置持有文件描述符或完整文本缓冲。
 struct TextColumn::Impl {
-    // 校验文本元数据和数据文件，并按配置建立预触页的只读数据映射。
+    // 校验文本元数据和数据文件，常驻模式将完整文本读入自有缓冲。
     Impl(const std::filesystem::path& data_path,
          const std::filesystem::path& metadata_path,
          uint64_t expected_records,
@@ -259,62 +284,37 @@ struct TextColumn::Impl {
             throw std::runtime_error("text-column data size mismatch");
         }
         if (resident_) {
-            if (total_bytes_ > static_cast<uint64_t>(
-                    std::numeric_limits<size_t>::max())) {
-                throw std::length_error(
-                    "resident text column exceeds address space");
-            }
-            if (total_bytes_ != 0) {
-                data_mapping_ = ::mmap(
-                    nullptr, static_cast<size_t>(total_bytes_), PROT_READ,
-                    MAP_PRIVATE, descriptor_, 0);
-                const int saved_errno = errno;
-                if (data_mapping_ == MAP_FAILED) {
-                    data_mapping_ = nullptr;
-                    ::close(descriptor_);
-                    descriptor_ = -1;
-                    ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-                    mapping_ = nullptr;
-                    throw std::runtime_error(
-                        "cannot mmap resident text column: " +
-                        std::string(std::strerror(saved_errno)));
+            try {
+                if (total_bytes_ > static_cast<uint64_t>(
+                        std::numeric_limits<size_t>::max())) {
+                    throw std::length_error(
+                        "resident text column exceeds address space");
                 }
-                // 逐页触碰数据映射，使首批读取前先完成缺页加载；
-                // 这不锁定页面，内核仍可在内存压力下回收它们。
-                const long page_size = ::sysconf(_SC_PAGESIZE);
-                const size_t stride = page_size > 0
-                    ? static_cast<size_t>(page_size)
-                    : size_t{4096};
-                volatile unsigned char touch = 0;
-                const char* data = static_cast<const char*>(data_mapping_);
-                for (size_t offset = 0;
-                     offset < static_cast<size_t>(total_bytes_);
-                     offset += stride) {
-                    touch ^= static_cast<unsigned char>(data[offset]);
-                }
-                touch ^= static_cast<unsigned char>(
-                    data[static_cast<size_t>(total_bytes_) - 1]);
-                (void)touch;
+                resident_data_.resize(static_cast<size_t>(total_bytes_));
+                pread_exact(descriptor_, resident_data_.data(), total_bytes_, 0);
+            } catch (...) {
+                ::close(descriptor_);
+                descriptor_ = -1;
+                ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
+                mapping_ = nullptr;
+                throw;
             }
             ::close(descriptor_);
             descriptor_ = -1;
         }
     }
 
-    // 关闭文本文件并解除数据和元数据映射。
+    // 关闭文本文件并解除索引映射；常驻缓冲随成员析构释放。
     ~Impl() {
         if (descriptor_ >= 0) ::close(descriptor_);
-        if (data_mapping_ != nullptr) {
-            ::munmap(data_mapping_, static_cast<size_t>(total_bytes_));
-        }
         if (mapping_ != nullptr) {
             ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
         }
     }
 
-    // 返回内存映射模式的数据字节数，不含元数据，也不代表实时 RSS。
+    // 返回已读入自有缓冲的文本字节数，不含元数据，也不代表实时 RSS。
     uint64_t resident_bytes() const noexcept {
-        return resident_ ? total_bytes_ : 0;
+        return resident_data_.size();
     }
 
     // 由块基址和相对偏移还原文本边界，允许查询末尾哨兵。
@@ -329,7 +329,7 @@ struct TextColumn::Impl {
         return block_base + offsets_[index];
     }
 
-    // 按请求顺序建立输出布局，从映射或合并读取范围填充文本批次。
+    // 按请求顺序建立输出布局，从常驻缓冲或合并读取范围填充文本批次。
     TextBatch batch_get(const std::vector<SequenceId>& ids,
                         const ReadOptions& options) const {
         TextBatch batch;
@@ -358,7 +358,7 @@ struct TextColumn::Impl {
         batch.storage.resize_uninitialized(static_cast<size_t>(output_bytes));
         batch.stats.resident = resident_;
         if (resident_) {
-            const char* data = static_cast<const char*>(data_mapping_);
+            const char* data = resident_data_.data();
             for (const TextRequest& request : requests) {
                 if (request.begin == request.end) continue;
                 std::memcpy(
@@ -366,7 +366,7 @@ struct TextColumn::Impl {
                     data + request.begin,
                     static_cast<size_t>(request.end - request.begin));
             }
-            batch.stats.unique_bytes = output_bytes;
+            if (options.collect_diagnostics) batch.stats.unique_bytes = output_bytes;
             return batch;
         }
         if (!options.input_sorted) {
@@ -374,12 +374,14 @@ struct TextColumn::Impl {
                 requests.begin(), requests.end(), text_request_less);
         }
         const TextPlan plan = plan_ranges(requests, options);
-        batch.stats.unique_bytes = plan.unique_bytes;
         batch.stats.ranges = plan.ranges.size();
-        batch.stats.merged_gaps = plan.merged_gaps;
         batch.stats.read_bytes = plan.read_bytes;
-        batch.stats.overread_bytes = plan.read_bytes - plan.unique_bytes;
         batch.stats.max_range_bytes = plan.max_range_bytes;
+        if (options.collect_diagnostics) {
+            batch.stats.unique_bytes = plan.unique_bytes;
+            batch.stats.merged_gaps = plan.merged_gaps;
+            batch.stats.overread_bytes = plan.read_bytes - plan.unique_bytes;
+        }
         if (plan.ranges.empty()) return batch;
 
         TextCopyContext copy{&plan, &requests, &batch};
@@ -419,26 +421,37 @@ struct TextColumn::Impl {
         TextReadContext read{
             descriptor_, &plan, &copy, &next_range, &errors};
         std::vector<std::thread> threads;
+        ThreadJoinGuard join_guard(threads);
         for (size_t worker = 1; worker < workers; ++worker) {
             threads.emplace_back(read_text_ranges, &read, worker);
         }
         read_text_ranges(&read, 0);
-        for (std::thread& thread : threads) thread.join();
+        join_guard.join_all();
         for (const std::exception_ptr& error : errors) {
             if (error) std::rethrow_exception(error);
         }
         return batch;
     }
 
+    // 文本记录数，打开时要求与序列总数一致，不计末尾边界。
     uint64_t record_count_ = 0;
+    // 文本数据文件总字节数，不含索引文件或额外终止符。
     uint64_t total_bytes_ = 0;
+    // 每块边界数的 log2，记录编号右移此值即可定位块基址。
     uint64_t block_shift_ = 0;
+    // 本对象持有的数据文件描述符；常驻正文载入后关闭并置为 -1。
     int descriptor_ = -1;
+    // 是否在打开时将完整文本读入自有缓冲；此后批读不再读取正文文件。
     bool resident_ = false;
+    // 本对象拥有的文本索引只读映射，供 offsets_ 和 bases_ 借用。
     void* mapping_ = nullptr;
+    // 索引映射的总字节数，析构 munmap 时使用。
     uint64_t mapping_bytes_ = 0;
-    void* data_mapping_ = nullptr;
+    // 常驻模式持有的完整文本；普通模式或空列时为空，生命周期与读取器一致。
+    std::vector<char, NoInitAllocator<char>> resident_data_;
+    // 按记录边界编号索引的 32 位块内字节偏移，共 record_count_ + 1 项。
     const uint32_t* offsets_ = nullptr;
+    // 64 位块字节基址数组的原始地址，按字节指针配合 memcpy 读取以兼容未对齐布局。
     const char* bases_ = nullptr;
 };
 

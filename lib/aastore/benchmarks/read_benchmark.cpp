@@ -42,7 +42,6 @@ struct Arguments {
     size_t threads = 8;
     size_t queue_depth = 64;
     aastore::IoBackend io_backend = aastore::IoBackend::Auto;
-    aastore::ReadStrategy read_strategy = aastore::ReadStrategy::Sparse;
     bool drop_cache = false;
     int64_t memory_mb = 0;
     bool memory_mb_set = false;
@@ -52,7 +51,6 @@ struct Arguments {
     uint64_t merge_gap_bytes = aastore::kByteRangeMergeGapBytes;
     uint64_t max_range_bytes = aastore::kMaxMergedRangeBytes;
     uint64_t max_exact_range_bytes = aastore::kMaxExactMergedRangeBytes;
-    uint64_t scan_max_range_bytes = aastore::kScanMaxRangeBytes;
 };
 
 // 解析 uint64_t 参数，并要求整个输入字符串均可转换。
@@ -104,9 +102,8 @@ Arguments parse_arguments(int argc, char** argv) {
             "[--full-memory] [--io-backend auto|pread|uring] "
             "[--queue-depth N] "
             "[--io-buffer-bytes N] "
-            "[--read-strategy sparse|scan] "
             "[--merge-gap N] [--max-range N] "
-            "[--max-exact-range N] [--scan-max-range N]");
+            "[--max-exact-range N]");
     }
     Arguments arguments;
     arguments.store = argv[1];
@@ -169,17 +166,6 @@ Arguments parse_arguments(int argc, char** argv) {
                 throw std::invalid_argument(
                     "I/O backend must be auto, pread, or uring");
             }
-        } else if (option == "--read-strategy") {
-            const std::string strategy(
-                next_argument(argc, argv, &i, "--read-strategy"));
-            if (strategy == "sparse") {
-                arguments.read_strategy = aastore::ReadStrategy::Sparse;
-            } else if (strategy == "scan") {
-                arguments.read_strategy = aastore::ReadStrategy::Scan;
-            } else {
-                throw std::invalid_argument(
-                    "read strategy must be sparse or scan");
-            }
         } else if (option == "--drop-cache") {
             arguments.drop_cache = true;
         } else if (option == "--memory-mb") {
@@ -206,11 +192,6 @@ Arguments parse_arguments(int argc, char** argv) {
             arguments.max_exact_range_bytes = parse_u64(
                 next_argument(argc, argv, &i, "--max-exact-range"),
                 "maximum exact range");
-        } else if (option == "--scan-max-range") {
-            arguments.scan_max_range_bytes =
-                parse_u64(next_argument(
-                    argc, argv, &i, "--scan-max-range"),
-                    "scan maximum range");
         } else {
             throw std::invalid_argument("unknown option: " + option);
         }
@@ -260,15 +241,6 @@ const char* requested_io_backend_name(aastore::IoBackend backend) {
         case aastore::IoBackend::Auto: return "auto";
         case aastore::IoBackend::Pread: return "pread";
         case aastore::IoBackend::IoUring: return "io_uring";
-    }
-    return "unknown";
-}
-
-// 返回范围读取策略标签。
-const char* read_strategy_name(aastore::ReadStrategy strategy) {
-    switch (strategy) {
-        case aastore::ReadStrategy::Sparse: return "sparse";
-        case aastore::ReadStrategy::Scan: return "scan";
     }
     return "unknown";
 }
@@ -457,7 +429,7 @@ void accumulate(aastore::BatchStats& total, const aastore::BatchStats& part) {
         &S::requested_sequences, &S::requested_residues,
         &S::cache_hits, &S::cache_misses, &S::cache_hit_residues,
         &S::cache_miss_residues, &S::unique_packed_bytes, &S::ranges,
-        &S::sparse_ranges, &S::scan_ranges, &S::merged_gaps, &S::free_merges,
+        &S::merged_gaps, &S::free_merges,
         &S::read_bytes, &S::overread_bytes, &S::io_submissions,
         &S::io_completions, &S::io_submit_calls, &S::io_submit_ns,
         &S::io_wait_calls, &S::io_empty_waits, &S::layout_ns, &S::sort_ns,
@@ -559,11 +531,9 @@ int main(int argc, char** argv) {
         options.io_backend = arguments.io_backend;
         options.io_queue_depth = arguments.queue_depth;
         options.io_buffer_bytes = arguments.io_buffer_bytes;
-        options.read_strategy = arguments.read_strategy;
         options.merge_gap_bytes = arguments.merge_gap_bytes;
         options.max_merged_range_bytes = arguments.max_range_bytes;
         options.max_exact_merged_range_bytes = arguments.max_exact_range_bytes;
-        options.scan_max_range_bytes = arguments.scan_max_range_bytes;
         aastore::BatchStats totals;
         double fetch_ms = 0;
         double fetch_user_ms = 0;
@@ -598,7 +568,7 @@ int main(int argc, char** argv) {
                     current = store.sequential_get(
                         0, static_cast<aastore::SequenceId>(ids.size()), options);
                 } else {
-                    current = store.batch_get(batch_ids, options);
+                    current = store.get(batch_ids, options);
                 }
                 round_ms += elapsed_ms(fetch_start);
                 ::getrusage(RUSAGE_SELF, &usage_after);
@@ -681,8 +651,6 @@ int main(int argc, char** argv) {
                   << arguments.queue_depth << '\n'
                   << "io_buffer_limit_bytes="
                   << arguments.io_buffer_bytes << '\n'
-                  << "read_strategy="
-                  << read_strategy_name(arguments.read_strategy) << '\n'
                   << "rounds=" << arguments.rounds << '\n'
                   << "storage_mode=" << storage_mode_name(
                          store.storage_mode()) << '\n'
@@ -697,11 +665,7 @@ int main(int argc, char** argv) {
                   << arguments.max_range_bytes << '\n'
                   << "max_exact_range_limit_bytes="
                   << arguments.max_exact_range_bytes << '\n'
-                  << "scan_max_range_limit_bytes="
-                  << arguments.scan_max_range_bytes << '\n'
                   << "ranges=" << totals.ranges << '\n'
-                  << "sparse_ranges=" << totals.sparse_ranges << '\n'
-                  << "scan_ranges=" << totals.scan_ranges << '\n'
                   << "free_merges=" << totals.free_merges << '\n'
                   << "active_io_backend="
                   << (used_pread && used_uring ? "mixed"

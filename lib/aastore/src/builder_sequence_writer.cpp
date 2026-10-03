@@ -170,19 +170,31 @@ public:
     }
 
 private:
+    // 编码槽位的生命周期；Complete 后仍由写线程持有，写完才变回 Free。
     enum class SlotState : uint8_t {
+        // 空闲，可由解析线程提交下一块字符。
         Free,
+        // 已提交到编码队列，尚未被工作线程领取。
         Queued,
+        // 正由编码线程、融合线程或调用线程生成 packed 数据。
         Encoding,
+        // 编码完成，等待按 job_id 顺序写出。
         Complete
     };
 
+    // 一个可复用编码任务槽，同时持有输入字符和输出 packed 缓冲。
     struct Slot {
+        // 与生产者交换得到的字符缓冲，只有前 residue_count 个字符有效。
         std::vector<char> residues;
+        // 编码输出缓冲，只有前 packed_bytes 个字节需要写入文件。
         std::vector<uint8_t> packed;
+        // 本任务的输入字符数，末尾任务可小于满块大小。
         size_t residue_count = 0;
+        // 本任务编码后的有效字节数，向上取整以容纳末尾不足一字节的位。
         size_t packed_bytes = 0;
+        // 从零递增的提交序号，写线程据此保持文件中的原始字符顺序。
         uint64_t job_id = 0;
+        // 槽位当前阶段，异步路径下的变更由流水线 mutex_ 保护。
         SlotState state = SlotState::Free;
     };
 
@@ -362,25 +374,45 @@ private:
         finished_ = true;
     }
 
+    // 借用的 packed 文件写入器，须在线程回收之后才销毁。
     BufferedFileWriter& output_;
+    // 固定槽位池，限制在途任务数量并复用输入、输出内存。
     std::vector<Slot> slots_;
+    // 存放待编码槽位下标的环形队列，不直接存放字符数据。
     std::vector<size_t> work_queue_;
+    // 独立编码线程；同步或融合方案下为空。
     std::vector<std::thread> encoders_;
+    // 按序写线程；融合方案下还负责该任务的编码。
     std::thread writer_;
+    // 保护槽位状态、队列位置、提交计数和异常/关闭标志。
     std::mutex mutex_;
+    // 槽位释放、任务到达、编码完成或关闭时唤醒等待线程。
     std::condition_variable changed_;
+    // 环形编码队列下一次出队的位置。
     size_t work_head_ = 0;
+    // 环形编码队列下一次入队的位置。
     size_t work_tail_ = 0;
+    // 队列中尚未领取的任务数，不含正在编码或等待写出的任务。
     size_t work_count_ = 0;
+    // 尚未退出的独立编码线程数，写线程据此判断是否可以结束。
     size_t active_encoders_ = 0;
+    // 配置的独立编码线程数，决定提交时由谁执行编码。
     size_t encoder_threads_ = 0;
+    // 是否由一个后台线程按序完成编码和写出。
     bool fused_worker_ = false;
+    // 异步路径已提交的任务总数，也是下一次提交的 job_id。
     uint64_t submitted_ = 0;
+    // 下一次必须写出的任务序号；等于 submitted_ 时已写完当前提交的任务。
     uint64_t next_write_ = 0;
+    // 是否完全在调用线程编码和写出，不启动后台线程。
     bool synchronous_ = false;
+    // 生产者是否已关闭提交；现有任务仍可继续排空。
     bool submissions_closed_ = false;
+    // 是否因异常或析构取消流水线，工作线程见到后停止处理。
     bool cancelled_ = false;
+    // 是否已完成 finish 或取消回收，防止析构重复收尾。
     bool finished_ = false;
+    // 首个后台异常，在线程回收后由调用线程重新抛出。
     std::exception_ptr error_;
 };
 
@@ -413,6 +445,7 @@ BuildThreadPlan plan_build_threads(size_t total_threads,
     return plan;
 }
 
+// 序列建库状态：跨 FASTA 行和记录积攒字符块，协调编码写出及边界索引。
 class SequenceBuildWriter::Impl {
 public:
     // 创建 packed 与边界输出，绑定流水线并分配固定容量的字符块缓冲。
@@ -472,12 +505,19 @@ public:
         chunk_fill_ = 0;
     }
 
+    // packed 数据的顺序写入器，生命周期长于借用它的 pipeline_。
     BufferedFileWriter packed_;
+    // 序列结束字符位置的紧凑索引写入器。
     CompactMetadataWriter metadata_;
+    // 拥有编码槽位和后台线程，负责按原顺序输出字符块。
     PackedWritePipeline pipeline_;
+    // 解析线程当前填充的字符块；提交时与流水线槽位交换缓冲。
     std::vector<char> residue_chunk_;
+    // 当前块中已填充的字符数，不要求与序列边界对齐。
     size_t chunk_fill_ = 0;
+    // 累计序列数、字符数和已提交块的 packed 字节数。
     BuildStats stats_;
+    // 是否已完成输出及索引发布，完成后拒绝继续追加。
     bool finished_ = false;
 };
 

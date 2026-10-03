@@ -1,0 +1,39 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/AAStoreThreads.cmake")
+aastore_find_threads(QUIET)
+if(NOT Threads_FOUND)
+    set(aastore_FOUND FALSE)
+    set(aastore_NOT_FOUND_MESSAGE "This AAStore SDK requires a usable threads library")
+    return()
+endif()
+
+if(@AASTORE_PACKAGE_NEEDS_URING@)
+    # Restore the caller's module path even if the dependency lookup fails.
+    set(_aastore_module_path "${CMAKE_MODULE_PATH}")
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+    find_package(AAStoreUring QUIET)
+    set(CMAKE_MODULE_PATH "${_aastore_module_path}")
+    unset(_aastore_module_path)
+    if(NOT AAStoreUring_FOUND)
+        set(aastore_FOUND FALSE)
+        set(aastore_NOT_FOUND_MESSAGE
+            "This static AAStore SDK requires liburing headers and library")
+        return()
+    endif()
+    if(@AASTORE_PACKAGE_NEEDS_URING_PROBE@ AND NOT AAStoreUring_HAS_PROBE)
+        set(aastore_FOUND FALSE)
+        set(aastore_NOT_FOUND_MESSAGE
+            "This static AAStore SDK requires the liburing opcode probe API")
+        return()
+    endif()
+    if(NOT "${AAStoreUring_ABI}" STREQUAL "@AASTORE_PACKAGE_URING_ABI@")
+        set(aastore_FOUND FALSE)
+        set(aastore_NOT_FOUND_MESSAGE
+            "This static AAStore SDK has an incompatible liburing structure layout; use a matching liburing build or rebuild the SDK")
+        return()
+    endif()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/aastore-targets.cmake")
+check_required_components(aastore)

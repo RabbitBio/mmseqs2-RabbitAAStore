@@ -421,7 +421,7 @@ void AAStoreTargetReader::fetch_into(
     options.threads = 1;
     options.io_queue_depth = threadBatchQueueDepth(computeThreads);
     batch.sequences.fetched.stats =
-        store_->batch_get_into(batch.physicalIds, batch.outputs, options);
+        store_->get_into(batch.physicalIds, batch.outputs, options);
 }
 
 // 汇总接入层使用的基本读取计数。

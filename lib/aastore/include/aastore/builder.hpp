@@ -16,6 +16,9 @@ struct BuildOptions {
     // 包含 FASTA 解析线程在内的建库总线程预算。
     // 为保持旧调用方的源码兼容性，保留原字段名。
     size_t encode_threads = 1;
+
+    // 校验建库线程预算；无效配置抛出 std::invalid_argument，不修改选项。
+    void validate() const;
 };
 
 struct BuildStats {

@@ -189,8 +189,11 @@ endif ()
 
 set(MMSEQS_C_FLAGS "${MMSEQS_CXX_FLAGS}")
 set(MMSEQS_CXX_FLAGS "${MMSEQS_CXX_FLAGS} -std=c++17")
-find_library(AASTORE_LIBURING_LIBRARY uring REQUIRED)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/aastore/cmake")
+find_package(AAStoreUring REQUIRED)
 option(AASTORE_BUILD_TESTS "Build AAStore library tests" OFF)
+option(AASTORE_BUILD_TOOLS "Build AAStore command-line tools" ON)
+option(AASTORE_BUILD_BENCHMARKS "Build AAStore benchmarks" ON)
 add_subdirectory(lib/aastore EXCLUDE_FROM_ALL)
 # Compiler-specific features
 # if (CMAKE_COMPILER_IS_CLANG AND (NOT EMSCRIPTEN))

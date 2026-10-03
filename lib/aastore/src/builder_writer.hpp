@@ -13,9 +13,13 @@ namespace aastore {
 
 // 把建库总线程预算分配给 packed 编码、packed 写入和文本写入。
 struct BuildThreadPlan {
+    // 独立 packed 编码线程数，不包含解析线程和写入线程。
     size_t packed_encoder_threads = 0;
+    // 是否另建一个仅负责按序写出 packed 数据的线程。
     bool packed_writer_async = false;
+    // 是否由同一个后台线程完成编码和写出，与独立编码/写线程方案互斥。
     bool packed_fused_worker = false;
+    // 名称和描述是否共用一个后台写入线程；false 时由调用线程写出。
     bool text_writer_async = false;
 };
 
@@ -48,7 +52,9 @@ public:
     const BuildStats& stats() const noexcept;
 
 private:
+    // 隐藏序列输出文件、编码槽位和边界累计状态的实现类型。
     class Impl;
+    // 独占内部实现及其文件、缓冲和工作线程。
     std::unique_ptr<Impl> impl_;
 };
 
@@ -81,7 +87,9 @@ public:
     uint64_t description_bytes() const noexcept;
 
 private:
+    // 隐藏文本列输出、边界索引和共享写入流水线的实现类型。
     class Impl;
+    // 独占内部实现；未启用的文本列不会创建对应写入器。
     std::unique_ptr<Impl> impl_;
 };
 

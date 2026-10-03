@@ -22,14 +22,23 @@ namespace {
 constexpr uint64_t kMinPreloadBytesPerThread = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kPreloadChunkBytes = 16ULL * 1024ULL * 1024ULL;
 
+// 并行定位读取的共享上下文，借用文件和输出区，支持静态分片或动态领取块。
 struct ParallelPreadContext {
+    // 调用方持有的只读文件描述符，本上下文不负责关闭。
     int descriptor = -1;
+    // 调用方提供的连续输出区起点，各线程写互不重叠的区间。
     char* output = nullptr;
+    // 整次读取的字节数，不是单线程块大小。
     uint64_t bytes = 0;
+    // 本次读取在源文件中的起始字节偏移。
     uint64_t offset = 0;
+    // 静态分片使用的工作线程数。
     size_t worker_count = 1;
+    // 是否在分块复制后提示内核释放源页缓存；启用时动态领取固定大小的块。
     bool discard_source_cache = false;
+    // 下一待领取块相对 output/offset 的字节偏移，通过原子加法推进。
     std::atomic<uint64_t> next_chunk{0};
+    // 借用的逐线程异常数组，每个线程只写自己的槽位，join 后统一检查。
     std::vector<std::exception_ptr>* errors = nullptr;
 };
 
@@ -142,6 +151,7 @@ void pread_exact_parallel(int descriptor, void* output, uint64_t bytes,
     }
 
     std::vector<std::thread> threads;
+    ThreadJoinGuard join_guard(threads);
     errors.resize(workers);
     threads.reserve(workers - 1);
     ctx.worker_count = workers;
@@ -149,7 +159,7 @@ void pread_exact_parallel(int descriptor, void* output, uint64_t bytes,
         threads.emplace_back(parallel_pread_worker, &ctx, worker);
     }
     parallel_pread_worker(&ctx, 0);
-    for (std::thread& thread : threads) thread.join();
+    join_guard.join_all();
     for (const std::exception_ptr& error : errors) {
         if (error) std::rethrow_exception(error);
     }

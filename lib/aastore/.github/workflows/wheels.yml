@@ -1,0 +1,36 @@
+name: Build portable wheels
+
+# A maintainer can download these artifacts for review. This workflow does not
+# publish to a package index or require credentials.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manylinux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Prepare build tools and source distribution
+        run: |
+          python -m pip install build cibuildwheel==4.2.1
+          python -m build --sdist --outdir dist
+      - name: Build and test CPython 3.9 through 3.13 wheels
+        run: python -m cibuildwheel --platform linux --output-dir wheelhouse "dist/aastore-$(cat VERSION).tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aastore-manylinux-x86_64
+          path: |
+            dist/*.tar.gz
+            wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 14

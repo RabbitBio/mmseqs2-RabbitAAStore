@@ -374,7 +374,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                            << threads << " query=" << (sameQTDB ? "aastore" : "native")
                            << " target=aastore decode=ascii\n";
     } else if (useAAStoreThreadBatch) {
-        Debug(Debug::INFO) << "AAStore alignment: dynamic thread-local batch_get_into, "
+        Debug(Debug::INFO) << "AAStore alignment: dynamic thread-local get_into, "
                            << "candidate_bytes_per_batch=" << threadBytes
                            << " aastore_threads=1 compute_threads=" << threads
                            << " io_queue_budget=" << AAStoreTargetReader::kThreadBatchIoBudget

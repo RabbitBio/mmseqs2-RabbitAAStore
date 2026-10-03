@@ -4,6 +4,7 @@
 #define AASTORE_STORE_IO_HPP
 
 #include "byte_range_planner.hpp"
+#include "thread_helpers.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -16,15 +17,24 @@ namespace aastore {
 
 using Clock = std::chrono::steady_clock;
 
+// 序列边界索引的前置声明；读取上下文只借用指针，不需要在此展开实现。
 class Metadata;
 
+// 单次读取借用的 Store 资源视图；不负责关闭文件或释放索引、常驻缓冲。
 struct StoreReadContext {
+    // 序列边界索引，由 Store 持有，用于 ID 到字符位置的查询。
     const Metadata* metadata = nullptr;
+    // 本次读取采用的磁盘、固定前缀或全量常驻模式。
     StorageMode storage_mode = StorageMode::ByteRange;
+    // packed.bin 的只读文件描述符，供定位读取使用。
     int packed_descriptor = -1;
+    // FullMemory 模式的完整 packed 数据起点，非此模式时可为空。
     const uint8_t* full_packed = nullptr;
+    // full_packed 可访问的有效字节数。
     uint64_t full_packed_bytes = 0;
+    // PrefixMemory 模式从 packed.bin 偏移零开始的常驻数据起点。
     const uint8_t* prefix_packed = nullptr;
+    // 常驻前缀覆盖的字节数，请求须完整落入此前缀才能直接解码。
     uint64_t prefix_packed_bytes = 0;
 };
 
@@ -58,12 +68,13 @@ void run_indexed_workers(size_t worker_count,
                          Context* context) {
     if (worker_count == 0) return;
     std::vector<std::thread> threads;
+    ThreadJoinGuard join_guard(threads);
     threads.reserve(worker_count - 1);
     for (size_t worker = 1; worker < worker_count; ++worker) {
         threads.emplace_back(worker_function, context, worker);
     }
     worker_function(context, 0);
-    for (std::thread& thread : threads) thread.join();
+    join_guard.join_all();
 }
 
 // 按线程索引执行可调用对象，调用线程参与工作；任务须自行处理跨线程异常。
@@ -71,6 +82,7 @@ template <typename Worker>
 void run_indexed_workers(size_t worker_count, Worker&& worker_function) {
     if (worker_count == 0) return;
     std::vector<std::thread> threads;
+    ThreadJoinGuard join_guard(threads);
     threads.reserve(worker_count - 1);
     for (size_t worker = 1; worker < worker_count; ++worker) {
         threads.emplace_back([&worker_function, worker]() {
@@ -78,7 +90,7 @@ void run_indexed_workers(size_t worker_count, Worker&& worker_function) {
         });
     }
     worker_function(0);
-    for (std::thread& thread : threads) thread.join();
+    join_guard.join_all();
 }
 
 // 在全部工作线程结束后，按槽位顺序重新抛出首个已记录的异常。

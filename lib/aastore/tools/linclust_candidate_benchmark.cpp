@@ -407,7 +407,7 @@ int main(int argc, char** argv) {
             options.merge_gap_bytes = arguments.merge_gap;
             options.max_merged_range_bytes = arguments.max_range;
             const auto aastore_start = Clock::now();
-            const aastore::Batch batch = store.batch_get(ids, options);
+            const aastore::Batch batch = store.get(ids, options);
             aastore_sum = checksum(
                 reinterpret_cast<const uint8_t*>(batch.storage.data()),
                 batch.storage.size());

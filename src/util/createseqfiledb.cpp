@@ -51,7 +51,7 @@ int createseqfiledb(int argc, const char **argv, const Command &command) {
         }
         sequences.validateSize(seqDb.getSize());
         AAStoreTargetReader::threadBatchQueueDepth(par.threads);
-        Debug(Debug::INFO) << "AAStore createseqfiledb: thread-local batch_get_into, header=native "
+        Debug(Debug::INFO) << "AAStore createseqfiledb: thread-local get_into, header=native "
                            << "sequence_header_bytes_per_thread=" << AAStoreTargetReader::kThreadBatchBytes
                            << " oversized_clusters=chunked\n";
     }

@@ -13,14 +13,15 @@
 
 namespace aastore {
 
+// 一列名称或描述的读取器，持有该列数据及 AATEXT1 边界索引的访问资源。
 class TextColumn {
 public:
-    // 打开并校验文本列，可选预触页的内存映射模式。
+    // 打开并校验文本列，常驻模式将完整正文读入自有内存。
     TextColumn(const std::filesystem::path& data_path,
                const std::filesystem::path& metadata_path,
                uint64_t expected_records,
                bool resident = false);
-    // 关闭文件并解除数据和元数据映射。
+    // 关闭文件、释放常驻正文并解除元数据映射。
     ~TextColumn();
 
     // 禁止复制拥有文件和映射的文本列。
@@ -35,7 +36,9 @@ public:
     uint64_t resident_bytes() const noexcept;
 
 private:
+    // 隐藏文件、索引映射以及可选常驻缓冲的实现类型。
     class Impl;
+    // 独占列读取实现，析构时统一关闭文件并解除映射。
     std::unique_ptr<Impl> impl_;
 };
 

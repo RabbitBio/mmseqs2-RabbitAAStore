@@ -11,7 +11,6 @@ namespace aastore {
 inline constexpr uint64_t kByteRangeMergeGapBytes = 4096;
 inline constexpr uint64_t kMaxMergedRangeBytes = 16 * 1024;
 inline constexpr uint64_t kMaxExactMergedRangeBytes = 1 * 1024 * 1024;
-inline constexpr uint64_t kScanMaxRangeBytes = 256 * 1024;
 inline constexpr uint64_t kIoBufferBytes = 16 * 1024 * 1024;
 
 enum class RecordFields : uint8_t {
@@ -51,8 +50,13 @@ struct StoreOptions {
     uint64_t cache_bytes = 0;
     // 预加载的最大工作线程数，包含调用线程。
     size_t threads = 8;
+    // 打开时将完整名称正文读入 Store 持有的内存，后续名称批读不访问正文文件。
     bool resident_names = false;
+    // 打开时将完整描述正文读入 Store 持有的内存；与名称及序列驻留选项独立。
     bool resident_descriptions = false;
+
+    // 校验存储模式及前缀预算；零线程保留现有的单线程语义。
+    void validate() const;
 };
 
 enum class IoBackend : uint8_t {
@@ -61,16 +65,12 @@ enum class IoBackend : uint8_t {
     IoUring
 };
 
-enum class ReadStrategy : uint8_t {
-    Sparse,
-    Scan
-};
-
 struct ReadOptions {
     // 每次批读用于排序、范围规划、I/O 和解码的最大工作线程数；
     // 包含调用线程，零按一个线程处理。
     size_t threads = 8;
-    // 读取后端；Auto 优先尝试 io_uring，不可用时回退到 pread。
+    // 读取后端；io_uring 按能力选择 READ/READV，旧内核使用 READV。
+    // Auto 在初始化或操作码不可用时回退到 pread；实际读错仍抛出异常。
     // Pread 强制使用 pread，IoUring 不可用时抛出异常。
     IoBackend io_backend = IoBackend::Auto;
     // 每个 io_uring 工作线程所管理 ring 的最大队列深度；
@@ -81,8 +81,6 @@ struct ReadOptions {
     uint64_t io_buffer_bytes = kIoBufferBytes;
     // 输入 ID 是否已按 SequenceId 非递减排列；为 true 时跳过内部排序。
     bool input_sorted = false;
-    // 范围读取策略；Sparse 保留稀疏范围，Scan 再将其合并为较大扫描范围。
-    ReadStrategy read_strategy = ReadStrategy::Sparse;
     // Sparse 规划中允许跨越并合并的最大物理间隙（字节）。
     uint64_t merge_gap_bytes = kByteRangeMergeGapBytes;
     // Sparse 规划中跨越非零间隙后，单个合并范围的最大字节数；
@@ -91,10 +89,12 @@ struct ReadOptions {
     // Sparse 规划中仅重叠或首尾相接时，单个合并范围的最大字节数；
     // 零表示不限制。
     uint64_t max_exact_merged_range_bytes = kMaxExactMergedRangeBytes;
-    // Scan 策略二次合并后，单个扫描范围的最大字节数；零表示不限制。
-    uint64_t scan_max_range_bytes = kScanMaxRangeBytes;
-    // 收集阶段耗时和 submit/wait API 诊断计数；默认关闭，基本统计始终保留。
+    // 收集读取放大、合并次数、命中/未命中残基数、阶段耗时及 submit/wait 诊断。
+    // 默认关闭；请求量、命中条数、读取字节数、范围/线程/队列及 SQE/CQE 计数始终保留。
     bool collect_diagnostics = false;
+
+    // 拒绝未知后端；零线程、零队列深度及零预算保留原有约定。
+    void validate() const;
 };
 
 // 一次序列批读的规划、前缀命中、I/O 和解码统计。
@@ -106,15 +106,16 @@ struct BatchStats {
     uint64_t requested_residues = 0;
     uint64_t cache_hits = 0;
     uint64_t cache_misses = 0;
+    // 以下三项仅在 collect_diagnostics=true 时采集，否则为零。
     uint64_t cache_hit_residues = 0;
     uint64_t cache_miss_residues = 0;
     uint64_t unique_packed_bytes = 0;
     uint64_t ranges = 0;
-    uint64_t sparse_ranges = 0;
-    uint64_t scan_ranges = 0;
+    // 合并次数仅在 collect_diagnostics=true 时采集，否则为零。
     uint64_t merged_gaps = 0;
     uint64_t free_merges = 0;
     uint64_t read_bytes = 0;
+    // 依赖 unique_packed_bytes，仅在 collect_diagnostics=true 时采集。
     uint64_t overread_bytes = 0;
     uint64_t max_range_bytes = 0;
     uint64_t workers = 0;
@@ -145,10 +146,13 @@ struct TextBatchStats {
     bool io_uring = false;
     uint64_t requested_strings = 0;
     uint64_t requested_bytes = 0;
+    // 仅在 ReadOptions::collect_diagnostics=true 时采集，否则为零。
     uint64_t unique_bytes = 0;
     uint64_t ranges = 0;
+    // 仅在 ReadOptions::collect_diagnostics=true 时采集，否则为零。
     uint64_t merged_gaps = 0;
     uint64_t read_bytes = 0;
+    // 依赖 unique_bytes，仅在 ReadOptions::collect_diagnostics=true 时采集。
     uint64_t overread_bytes = 0;
     uint64_t max_range_bytes = 0;
 };

@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/@AASTORE_PKGCONFIG_PREFIX_RELATIVE@
+exec_prefix=${prefix}
+libdir=${prefix}/@AASTORE_PKGCONFIG_LIBDIR_RELATIVE@
+includedir=${prefix}/@AASTORE_PKGCONFIG_INCLUDEDIR_RELATIVE@
+
+Name: aastore
+Description: Compact protein FASTA storage with random and sequential access
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -laastore @AASTORE_PKGCONFIG_PUBLIC_LIBS@
+Libs.private: @AASTORE_PKGCONFIG_PRIVATE_LIBS@
+Cflags: -I${includedir}

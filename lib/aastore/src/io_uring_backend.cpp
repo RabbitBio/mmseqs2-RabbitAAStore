@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -14,6 +16,7 @@
 
 #if defined(AASTORE_HAVE_IO_URING)
 #include <liburing.h>
+#include <sys/uio.h>
 #endif
 
 namespace aastore {
@@ -21,17 +24,32 @@ namespace aastore {
 namespace {
 
 #if defined(AASTORE_HAVE_IO_URING)
+// 一个在途读取范围的缓冲槽；短读继续使用本槽，完整读取并回调后才允许复用。
 struct ReadSlot {
+    // 当前范围在本批 ranges 数组中的下标，不是序列 ID。
     size_t range_index = 0;
+    // 本范围累计读到的字节数，短读续传从此位置继续填充。
     uint64_t completed = 0;
+    // 本槽拥有的原始字节缓冲；I/O 完成和同步回调返回前不得移动或覆盖。
     std::vector<uint8_t, NoInitAllocator<uint8_t>> buffer;
+    // READV 的单段目标描述，指向 buffer 中尚未读完的部分。
+    // Linux 5.4 及以前要求 READV 的 iovec 一直有效到完成事件到达。
+    iovec vector {};
 };
 
+// 一个工作线程独占的 ring 及其缓冲槽，可由线程本地状态跨批次复用。
 struct ReadRing {
+    // liburing 管理的提交/完成队列和内核 ring 资源。
     io_uring ring {};
+    // 队列是否初始化成功，决定 reset 是否需要调用 queue_exit。
     bool initialized = false;
+    // 当前是否已被一次调用借用，阻止嵌套回调复用同一个 ring。
     bool busy = false;
+    // 是否使用 READV 兼容路径；false 表示内核和 liburing 均支持 READ。
+    bool use_readv = true;
+    // 初始化 ring 时指定的队列深度；下次调用深度变化时重建资源。
     size_t capacity = 0;
+    // 各读取槽的用户态缓冲；reset 只销毁 ring，不直接释放此数组。
     std::vector<ReadSlot> slots;
 
     // 销毁已初始化的 ring，保留可复用的用户态缓冲。
@@ -45,13 +63,40 @@ struct ReadRing {
     ~ReadRing() { reset(); }
 };
 
+// 依据操作码能力选择读取方式；旧内核或旧 liburing 无探测接口时使用 READV。
+// 探测失败不代表读取失败，后续真实 I/O 和回调错误仍照常向调用方传播。
+bool select_read_opcode(ReadRing& state, std::string& unavailable_reason) {
+    state.use_readv = true;
+#if defined(AASTORE_URING_HAS_PROBE)
+    const std::unique_ptr<io_uring_probe, decltype(&std::free)> probe(
+        io_uring_get_probe_ring(&state.ring), &std::free);
+    if (!probe) return true;
+#if defined(AASTORE_URING_HAS_READ)
+    if (io_uring_opcode_supported(probe.get(), IORING_OP_READ)) {
+        state.use_readv = false;
+        return true;
+    }
+#endif
+    if (!io_uring_opcode_supported(probe.get(), IORING_OP_READV)) {
+        unavailable_reason = "no usable io_uring READ or READV opcode";
+        return false;
+    }
+#else
+    (void)unavailable_reason;
+#endif
+    return true;
+}
+
 // 每个同步调用线程最多保留 16 MiB 读取缓冲；较大范围、
 // 嵌套回调和多线程调用使用临时 ring。
 constexpr size_t kMaxRetainedQueueDepth = 64;
 thread_local ReadRing retained_ring;
 
+// 一次 ring 借用的作用域保护，正常归还时保留资源，异常退出时销毁内核队列。
 struct ReadRingLease {
+    // 借用的本地或线程本地 ring，其生命周期须覆盖本保护器。
     ReadRing& state;
+    // 本次分区是否正常读完；false 时析构先 reset 再解除 busy 标志。
     bool complete = false;
 
     // 标记 ring 正被当前调用占用，防止嵌套回调再次借用。
@@ -75,21 +120,36 @@ bool ranges_fit_retained_buffers(const std::vector<ByteRange>& ranges,
     return true;
 }
 
-// 一个 ring 的全部可变状态集中放在这里，便于 profile 时直接检查。
+// 单个分区的 I/O 循环状态，串联槽位分配、请求提交、完成回调和短读续传。
+// 全部可变状态仅由该 ring 的所属线程修改。
 struct PartitionIoContext {
+    // 借用的源文件描述符，通常指向 packed.bin，也可用于文本列。
     int descriptor = -1;
+    // 全批按文件偏移排序的读取范围，执行期间保持不变。
     const std::vector<ByteRange>* ranges = nullptr;
+    // 本 ring 所属线程编号，传给完成回调以选择线程统计槽。
     size_t worker_index = 0;
+    // 本分区最后一个范围的下一下标，限定 ranges 中的处理区间。
     size_t partition_end = 0;
+    // 是否使用线程本地保留 ring，决定缓冲扩容时的容量控制方式。
     bool reuse_ring = false;
+    // 本线程独占使用的 ring 状态，不在工作线程之间共享。
     ReadRing* ring = nullptr;
+    // 借用 ring 中的槽数组，SQE user_data 存放其下标。
     std::vector<ReadSlot>* slots = nullptr;
+    // 可重新分配的槽位下标栈；只有回调结束后才把完整读取的槽放回。
     std::vector<size_t>* free_slots = nullptr;
+    // 完整范围的同步处理回调，由本 ring 所属线程直接执行。
     RangeCompletion complete = nullptr;
+    // 借用的回调上下文，具体类型由上层序列解码或文本复制逻辑决定。
     void* complete_context = nullptr;
+    // 本分区独占的统计槽，分区结束后由调用方合并。
     IoUringStats* stats = nullptr;
+    // 尚未首次分配槽位的下一个范围下标；短读续传不推进此计数。
     size_t next_range = 0;
+    // 已提交但尚未消费 CQE 的请求数，不包含待提交 SQE 或正在执行的回调。
     size_t outstanding = 0;
+    // 是否记录 submit/wait API 耗时与调用次数，基本请求统计始终保留。
     bool collect_diagnostics = false;
 };
 
@@ -118,11 +178,21 @@ void prepare_partition_read(PartitionIoContext* ctx, size_t slot_index,
     if (sqe == nullptr) {
         throw std::runtime_error("io_uring submission queue is full");
     }
-    io_uring_prep_read(
-        sqe, ctx->descriptor,
-        slot.buffer.data() + static_cast<size_t>(slot.completed),
-        static_cast<unsigned>(remaining),
-        static_cast<off_t>(range.begin + slot.completed));
+    const auto offset = static_cast<off_t>(range.begin + slot.completed);
+#if defined(AASTORE_URING_HAS_READ)
+    if (!ctx->ring->use_readv) {
+        io_uring_prep_read(
+            sqe, ctx->descriptor,
+            slot.buffer.data() + static_cast<size_t>(slot.completed),
+            static_cast<unsigned>(remaining), offset);
+    } else
+#endif
+    {
+        slot.vector.iov_base =
+            slot.buffer.data() + static_cast<size_t>(slot.completed);
+        slot.vector.iov_len = static_cast<size_t>(remaining);
+        io_uring_prep_readv(sqe, ctx->descriptor, &slot.vector, 1, offset);
+    }
     sqe->user_data = static_cast<unsigned long long>(slot_index);
 }
 
@@ -259,6 +329,7 @@ bool read_range_partition_io_uring(
         }
         guard.initialized = true;
         guard.capacity = capacity;
+        if (!select_read_opcode(guard, unavailable_reason)) return false;
         guard.slots.resize(capacity);
     }
     std::vector<ReadSlot>& slots = guard.slots;
@@ -360,20 +431,35 @@ bool read_range_partition_io_uring(
 #if defined(AASTORE_HAVE_IO_URING)
 namespace {
 
+// 多 ring 调度的共享参数，各线程只写自己的统计、失败原因和异常槽位。
 struct RangeWorkerContext {
+    // 借用的源文件描述符，各线程通过显式偏移读取，不共享文件游标。
     int descriptor = -1;
+    // 本批完整的有序读取范围列表。
     const std::vector<ByteRange>* ranges = nullptr;
+    // 长度为 worker_count + 1 的范围下标边界数组，每个线程处理相邻两项之间。
     const std::vector<size_t>* partition_bounds = nullptr;
+    // 实际 I/O 工作线程数，包含调用线程；单线程时才尝试复用保留 ring。
     size_t worker_count = 0;
+    // 每个 ring 的目标深度，进入分区后还会按分区范围数进一步缩小。
     size_t queue_depth = 0;
+    // 每个完整范围都要执行的同步完成回调。
     RangeCompletion complete = nullptr;
+    // 各工作线程共用的上层完成上下文，回调负责保证输出互不冲突。
     void* complete_context = nullptr;
+    // 借用的逐线程统计数组，全部 join 后汇总。
     std::vector<IoUringStats>* stats = nullptr;
+    // 各线程后端初始化或读取操作码不可用时记录的原因。
     std::vector<std::string>* reasons = nullptr;
+    // 各线程捕获的异常，由调用方 join 后重新抛出。
     std::vector<std::exception_ptr>* errors = nullptr;
+    // 各线程是否成功使用了 io_uring 路径，非零为成功。
     std::vector<uint8_t>* used = nullptr;
+    // 可选的有限工作片回调，在 I/O 处理循环中执行，当前用于前缀解码。
     CooperativeWork work = nullptr;
+    // 借用的协作任务共享上下文，通常含原子任务领取下标。
     void* work_context = nullptr;
+    // 本批是否启用详细诊断，传递到每个 ring。
     bool collect_diagnostics = false;
 };
 
@@ -396,7 +482,7 @@ void run_range_worker(RangeWorkerContext* ctx, size_t worker) noexcept {
 }  // namespace
 #endif
 
-// 按累计字节划分有序范围并执行读取；后端初始化不可用时返回 false。
+// 按累计字节划分有序范围并执行读取；初始化或读取操作码不可用时返回 false。
 bool read_ranges_io_uring(int descriptor,
                           const std::vector<ByteRange>& ranges,
                           size_t worker_count,

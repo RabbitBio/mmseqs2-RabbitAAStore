@@ -40,7 +40,7 @@ int result2repseq(int argc, const char **argv, const Command &command) {
         }
         sequences.validateSize(seqReader.getSize());
         AAStoreTargetReader::threadBatchQueueDepth(par.threads);
-        Debug(Debug::INFO) << "AAStore result2repseq: thread-local batch_get_into, "
+        Debug(Debug::INFO) << "AAStore result2repseq: thread-local get_into, "
                            << "sequence_bytes_per_thread=" << AAStoreTargetReader::kThreadBatchBytes
                            << " cluster_limit=none\n";
     }

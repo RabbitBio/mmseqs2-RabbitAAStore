@@ -104,6 +104,8 @@ def main():
             assert int(metrics["residues"]) == 2 * sum(len(records[index]) for index in ids)
         single_batch = checked([args.bench, store, "--sample-percent", 100])
         assert single_batch["output_hash_fnv1a64"] == paired["100"][1]
+        for removed in ("read_strategy", "scan_max_range_limit_bytes", "sparse_ranges", "scan_ranges"):
+            assert removed not in single_batch
         sequential_hash = digest(records, range(len(records)))
         for storage_args, budget, mode in storage_cases:
             metrics = checked([args.bench, store, "--fast-sequential", "--requests", len(records),
@@ -126,6 +128,8 @@ def main():
                       ["--memory-bytes", "-1"],
                       ["--memory-bytes", "1", "--memory-mb", "0"],
                       ["--memory-bytes", "1", "--full-memory"],
+                      ["--read-strategy", "sparse"], ["--read-strategy", "scan"],
+                      ["--scan-max-range", "0"],
                       ["--fast-sequential", "--batch-bytes", "1"]):
             result = subprocess.run([str(args.bench), str(store)] + extra,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)

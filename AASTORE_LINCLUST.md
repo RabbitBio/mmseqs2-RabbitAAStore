@@ -35,6 +35,18 @@ cmake -S . -B build-aastore
 cmake --build build-aastore -j8
 ```
 
+The bundled source is based on
+[`RabbitBio/AABinaryStore` at `ab94e4d3a0306c78d29ffe2182c3839fe803073d`](https://github.com/RabbitBio/AABinaryStore/tree/ab94e4d3a0306c78d29ffe2182c3839fe803073d).
+The Scan strategy and its public options/counters have been removed in sync
+with the standalone library; existing Sparse range merging is unchanged.
+Resident name and description columns likewise use Store-owned buffers
+instead of pre-touched file mappings, matching the standalone library.
+Single and random batch sequence reads share `get`, returning `Batch`;
+caller-owned output buffers use `get_into`. The adapter keeps its reusable
+output arena and the single-string FullMemory path.
+Its build dependencies, SDK files, tests, and examples are included alongside
+the library; no external checkout is required.
+
 The build always uses this project's `lib/aastore` sources; no external
 checkout or prebuilt archive is selected. Linux `liburing` is required.
 The AAStore library is linked into `mmseqs`. Standalone tools are not part of
@@ -102,7 +114,7 @@ their candidate sequences account for approximately 64 MiB. It then:
 
 1. removes duplicate local IDs within the batch;
 2. translates local IDs to AAStore physical IDs;
-3. submits one `batch_get_into` call;
+3. submits one `get_into` call;
 4. scores all queries covered by that batch;
 5. reuses the same output arena for its next batch.
 

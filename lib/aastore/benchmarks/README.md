@@ -17,7 +17,7 @@ Record sampling changes the workload, not the underlying database.
 | I/O buffer setting | 16 MiB per batch call, shared among rings |
 | Queue depth setting | 64, subject to the library's range and buffer limits |
 
-The caller invokes `batch_get()` serially with bounded batches in both modes.
+The caller invokes `get()` serially with bounded batches in both modes.
 AAStore distributes work internally using `ReadOptions::threads`.
 FullMemory takes the resident decode path, bypassing range planning and disk reads
 during fetch. NonFull plans ranges and reads/decodes using its internal workers.
@@ -56,9 +56,11 @@ between batches. OS code pages and unrelated files are not flushed.
 ## Metrics
 
 The benchmark explicitly enables `ReadOptions::collect_diagnostics` and reports
-`collect_diagnostics=1`. The library leaves detailed read timings and submit/wait
-API counters off by default; basic byte, range, request and SQE counts remain
-available. Benchmark fetch timings include the enabled diagnostic overhead.
+`collect_diagnostics=1`. The library leaves coverage/overread, merge and prefix
+residue counts, detailed read timings and submit/wait API counters off by default;
+basic read-byte, range, request, hit/miss and SQE/CQE counts remain available.
+Disabling diagnostics also skips the parallel coverage-statistics pass.
+Benchmark fetch timings include the enabled diagnostic overhead.
 
 - `open_ms`: Store construction, including FullMemory or PrefixMemory preload.
 - `fetch_ms`: sum of timed AAStore calls, excluding request generation and hashes.

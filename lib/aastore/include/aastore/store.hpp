@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <new>
 #include <string>
@@ -202,7 +203,7 @@ public:
     StorageMode storage_mode() const noexcept;
     // 返回已常驻的 packed 数据字节数，不含元数据。
     uint64_t resident_bytes() const;
-    // 返回配置为常驻模式的文本数据字节数，不含文本元数据。
+    // 返回已载入自有缓冲的文本数据字节数，不含文本元数据。
     uint64_t resident_text_bytes() const;
     // 返回打开数据库时序列数据预加载耗时，单位为纳秒。
     uint64_t preload_ns() const noexcept;
@@ -214,31 +215,33 @@ public:
     uint64_t sequence_length(SequenceId id) const;
     // 返回当前运行时选择的解码内核名称。
     const char* decode_kernel_name() const noexcept;
-    // 读取单条序列并返回独立字符串，不构建批次或启动工作线程。
-    // FullMemory 模式直接从常驻 packed 数据解码。
-    std::string get(SequenceId id) const;
+    // 读取单条序列，返回含一个元素的批次；读取选项与多条读取一致。
+    Batch get(SequenceId id, const ReadOptions& options = {}) const;
     // 调整并复用调用方字符串读取单条序列；并发调用须使用独立输出。
     void get_into(SequenceId id, std::string& output) const;
     // 批量读取序列，结果按输入 ID 顺序访问，并保留重复请求。
-    Batch batch_get(const std::vector<SequenceId>& ids,
-                    const ReadOptions& options = {}) const;
+    Batch get(const std::vector<SequenceId>& ids,
+              const ReadOptions& options = {}) const;
+    // 明确把花括号参数视为 ID 列表，尤其 get({}) 表示空批次而不是 ID 0。
+    Batch get(std::initializer_list<SequenceId> ids,
+              const ReadOptions& options = {}) const;
     // 把序列直接解码到 outputs[i]，返回读取统计，不分配输出 arena 或追加 NUL。
     // output_count 必须等于 ids.size()；各非空序列的输出区不得重叠，
     // 容量至少为 sequence_length(ids[i])；空序列可使用空指针。
-    BatchStats batch_get_into(const std::vector<SequenceId>& ids,
-                              char* const* outputs, size_t output_count,
-                              const ReadOptions& options = {}) const;
+    BatchStats get_into(const std::vector<SequenceId>& ids,
+                        char* const* outputs, size_t output_count,
+                        const ReadOptions& options = {}) const;
     // 使用指针数组提供逐序列输出区，缓冲所有权和容量由调用方管理。
-    BatchStats batch_get_into(const std::vector<SequenceId>& ids,
-                              const std::vector<char*>& outputs,
-                              const ReadOptions& options = {}) const;
+    BatchStats get_into(const std::vector<SequenceId>& ids,
+                        const std::vector<char*>& outputs,
+                        const ReadOptions& options = {}) const;
     // 读取连续半开 ID 区间，输出为无逐序列 NUL 的连续残基流，通过 view 访问。
     // 每个线程读取并解码自己的分片；文件读取使用 pread，未使用 io_uring。
     Batch sequential_get(SequenceId first_sequence,
                          SequenceId end_sequence,
                          const ReadOptions& options = {}) const;
     // 连续读取 [first_sequence, end_sequence)，直接解码到 outputs[i] 并返回统计。
-    // output_count 必须等于 end_sequence - first_sequence；输出区约定同 batch_get_into。
+    // output_count 必须等于 end_sequence - first_sequence；输出区约定同 get_into。
     // outputs[i] 对应 first_sequence + i，不分配输出 arena，不追加 NUL，使用 pread。
     BatchStats sequential_get_into(SequenceId first_sequence,
                                    SequenceId end_sequence,

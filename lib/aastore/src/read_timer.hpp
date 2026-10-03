@@ -7,6 +7,7 @@
 
 namespace aastore {
 
+// 可选的作用域阶段计时器，只保存起点，不负责发布或累加统计。
 class DiagnosticTimer {
 public:
     // 仅在启用诊断时记录起点。
@@ -24,7 +25,9 @@ public:
 
 private:
     using Clock = std::chrono::steady_clock;
+    // 是否采集时间；关闭时构造和查询都不读取系统时钟。
     bool enabled_;
+    // 启用诊断时记录的单调时钟起点，避免系统时间调整影响耗时。
     Clock::time_point start_{};
 };
 

@@ -29,9 +29,13 @@ uint64_t sequential_worker_boundary(uint64_t residue_begin,
     return (absolute & ~uint64_t{7}) - residue_begin;
 }
 
+// 连续 ID 读取的整体字符区间及分片规模，不存放序列数据或文件资源。
 struct SequentialReadState {
+    // 第一条请求序列在全库字符流中的起点。
     uint64_t residue_begin = 0;
+    // 整个请求区间的字符总数，也是无分隔符输出区的字节数。
     uint64_t residue_count = 0;
+    // 根据数据量和线程预算选定的分片数；没有字符时保持为零。
     size_t worker_count = 0;
 };
 
@@ -199,16 +203,10 @@ void publish_sequential_stats(
         const std::vector<uint64_t>* decode_ns,
         const std::vector<uint64_t>* read_bytes,
         BatchStats* stats) {
-    const SequenceRequest full_request{
-        0, 0, state->residue_begin, state->residue_count};
-    const PackedByteExtent full_extent =
-        packed_byte_extent(full_request);
-    stats->unique_packed_bytes = full_extent.end - full_extent.begin;
     stats->workers = state->worker_count;
     stats->io_workers = state->worker_count;
     stats->decode_workers = state->worker_count;
     stats->ranges = state->worker_count;
-    stats->sparse_ranges = state->worker_count;
     stats->worker_wall_ns = worker_wall_ns;
     for (size_t worker = 0; worker < state->worker_count; ++worker) {
         if (stats->diagnostics_collected) {
@@ -219,10 +217,16 @@ void publish_sequential_stats(
         stats->max_range_bytes = std::max(
             stats->max_range_bytes, (*read_bytes)[worker]);
     }
-    stats->overread_bytes =
-        stats->read_bytes > stats->unique_packed_bytes
-            ? stats->read_bytes - stats->unique_packed_bytes
-            : 0;
+    if (stats->diagnostics_collected) {
+        const SequenceRequest full_request{
+            0, 0, state->residue_begin, state->residue_count};
+        const PackedByteExtent full_extent = packed_byte_extent(full_request);
+        stats->unique_packed_bytes = full_extent.end - full_extent.begin;
+        stats->overread_bytes =
+            stats->read_bytes > stats->unique_packed_bytes
+                ? stats->read_bytes - stats->unique_packed_bytes
+                : 0;
+    }
 }
 
 }  // namespace

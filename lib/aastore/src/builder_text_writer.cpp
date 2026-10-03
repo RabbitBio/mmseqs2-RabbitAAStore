@@ -99,8 +99,11 @@ public:
     }
 
 private:
+    // 一次文本写入任务，两列分别持有自己的连续字节，不包含记录分隔符。
     struct TextChunk {
+        // 本任务要追加到名称文件的字节，名称列关闭时为空。
         std::vector<char> names;
+        // 本任务要追加到描述文件的字节，描述列关闭时为空。
         std::vector<char> descriptions;
     };
 
@@ -161,22 +164,35 @@ private:
         finished_ = true;
     }
 
+    // 最多排队的文本块数，不包括写线程已经取走的当前块。
     static constexpr size_t kQueueCapacity = 2;
+    // 借用的名称数据写入器；nullptr 表示不输出名称。
     BufferedFileWriter* names_ = nullptr;
+    // 借用的描述数据写入器；nullptr 表示不输出描述。
     BufferedFileWriter* descriptions_ = nullptr;
+    // 是否将写入交给后台线程；false 时 submit 在调用线程直接写出。
     bool asynchronous_ = false;
+    // 按提交顺序排队的文本块，持有等待写出的字节缓冲。
     std::deque<TextChunk> chunks_;
+    // 两列共用的后台顺序写入线程。
     std::thread writer_;
+    // 保护任务队列以及关闭、取消和异常状态。
     std::mutex mutex_;
+    // 通知队列有任务、有空位或需要结束。
     std::condition_variable changed_;
+    // 生产端已关闭，写线程排空队列后退出。
     bool closed_ = false;
+    // 已请求取消，允许工作线程不再处理排队任务。
     bool cancelled_ = false;
+    // 后台线程是否已回收，避免析构重复取消。
     bool finished_ = false;
+    // 首个后台写入异常，提交端或 finish 负责传播。
     std::exception_ptr error_;
 };
 
 }  // namespace
 
+// 文本建库状态：拆分 FASTA 头，分别累计名称/描述的字节边界并批量写出。
 class TextBuildWriter::Impl {
 public:
     // 仅为启用的文本列创建数据和元数据写入器，并建立共享输出流水线。
@@ -302,17 +318,29 @@ public:
         }
     }
 
+    // 是否创建名称数据和名称边界索引。
     bool write_names_ = false;
+    // 是否创建描述数据和描述边界索引。
     bool write_descriptions_ = false;
+    // 是否已经排空流水线并发布文本索引。
     bool finished_ = false;
+    // 已接收名称的总字节数，也是下一条名称的起点，不含索引文件大小。
     uint64_t name_bytes_ = 0;
+    // 已接收描述的总字节数，也是下一条描述的起点。
     uint64_t description_bytes_ = 0;
+    // 独占名称数据写入器，名称列关闭时为空。
     std::unique_ptr<BufferedFileWriter> names_;
+    // 独占描述数据写入器，描述列关闭时为空。
     std::unique_ptr<BufferedFileWriter> descriptions_;
+    // 记录每条名称的结束字节位置。
     std::unique_ptr<CompactTextMetadataWriter> name_metadata_;
+    // 记录每条描述的结束字节位置。
     std::unique_ptr<CompactTextMetadataWriter> description_metadata_;
+    // 两列共用的写入流水线，须早于被借用的写入器销毁。
     std::unique_ptr<TextWritePipeline> pipeline_;
+    // 调用线程暂存的名称字节，满块时提交流水线。
     std::vector<char> names_chunk_;
+    // 调用线程暂存的描述字节，可与名称块同时提交但长度互相独立。
     std::vector<char> descriptions_chunk_;
 };
 
