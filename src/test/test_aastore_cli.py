@@ -132,6 +132,9 @@ def main():
     def digest(path):
         return hashlib.sha256(b'\n'.join(sorted(path.read_bytes().splitlines()))).hexdigest()
 
+    def fasta_records(path):
+        return sorted(record for record in path.read_bytes().split(b'>') if record)
+
     database = root / 'shuffled'
     baseline = None
     packed = root / 'shuffled.aastore/packed.bin'
@@ -199,11 +202,12 @@ def main():
                             root / 'broken_enabled_tmp', '--aastore', '-v', '1'], success=False)
     check('enabled_rejects_broken_association', not (root / 'broken_enabled.dbtype').exists())
 
-    # Easy workflows must forward --aastore through both creation and cascade.
+    # Easy workflows must forward --aastore through creation, cascade, and export.
     for workflow, extra in (
             ('easy-linclust', ['--createdb-mode', '0', '--shuffle', '1']),
             ('easy-cluster', ['--cluster-steps', '2', '-s', '1'])):
         baseline = None
+        baseline_fastas = None
         for enabled in (False, True):
             label = workflow + ('_aastore' if enabled else '_native')
             prefix = root / label
@@ -219,7 +223,15 @@ def main():
             if baseline is None:
                 baseline = value
             check(label + '_results', value == baseline)
+            fastas = [fasta_records(Path(str(prefix) + suffix))
+                      for suffix in ('_rep_seq.fasta', '_all_seqs.fasta')]
+            if baseline_fastas is None:
+                baseline_fastas = fastas
+            check(label + '_fasta_results', fastas == baseline_fastas)
             check(label + '_reader', ('AAStore target enabled:' in log) == enabled)
+            for stage in ('result2repseq', 'createseqfiledb'):
+                check(label + '_' + stage + '_reader',
+                      ('AAStore ' + stage + ':' in log) == enabled)
             if enabled:
                 stores = {store.resolve() for store in tmp.glob('*/input.aastore')}
                 check(label + '_automatic_store', len(stores) == 1)

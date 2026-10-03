@@ -879,6 +879,7 @@ Parameters::Parameters():
     result2flat.push_back(&PARAM_V);
 
     // result2repseq
+    result2repseq.push_back(&PARAM_AASTORE);
     result2repseq.push_back(&PARAM_PRELOAD_MODE);
     result2repseq.push_back(&PARAM_COMPRESSED);
     result2repseq.push_back(&PARAM_THREADS);
@@ -899,6 +900,7 @@ Parameters::Parameters():
     translatenucs.push_back(&PARAM_THREADS);
 
     // createseqfiledb
+    createseqfiledb.push_back(&PARAM_AASTORE);
     createseqfiledb.push_back(&PARAM_MIN_SEQUENCES);
     createseqfiledb.push_back(&PARAM_MAX_SEQUENCES);
     createseqfiledb.push_back(&PARAM_HH_FORMAT);

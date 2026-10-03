@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-// Random-access adapter shared by rescorediagonal and Alignment. MMseqs local
+// Random-access adapter shared by alignment and sequence export. MMseqs local
 // IDs stay separate from AAStore physical IDs so createsubdb views can reuse
 // one external store without rewriting sequence data.
 class AAStoreTargetReader : public MemoryTracker {

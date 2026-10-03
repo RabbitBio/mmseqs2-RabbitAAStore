@@ -2,22 +2,24 @@
 
 This branch uses AAStore only as an optional random-access sequence reader.
 MMseqs2 continues to own database creation, shuffle, k-mer matching, result
-databases, exports, and the native sequence payload. `--aastore` automatically
+databases, export formatting, and the native sequence payload. `--aastore` automatically
 adds sequence-only AAStore construction after native database creation.
 
-The integration has six parts:
+The integration has seven parts:
 
 1. `AAStoreTargetReader`: storage selection, memory budgeting, ID mapping,
    FullMemory reads, and thread-local random batches.
 2. `rescorediagonal`: AAStore query/target access for same-database rescoring.
 3. `Alignment`: AAStore target access and same-database query access.
-4. `createsubdb`: propagation of the small `.aastore.path` association.
-5. `--aastore`: automatic construction in final MMseqs ID order and workflow
+4. `result2repseq` and `createseqfiledb`: thread-local sequence batches for
+   export, retaining native header reads and output formatting.
+5. `createsubdb`: propagation of the small `.aastore.path` association.
+6. `--aastore`: automatic construction in final MMseqs ID order and workflow
    parameter forwarding.
-6. CMake wiring and focused unit/integration tests.
+7. CMake wiring and focused unit/integration tests.
 
-There is no AAStore read path in `kmermatcher`, `createseqfiledb`, or
-`result2repseq`. AAStore does not replace the native MMseqs2 sequence file.
+There is no AAStore read path in `kmermatcher`, `createtsv`, or `result2flat`.
+AAStore does not replace the native MMseqs2 sequence file.
 
 Linclust's workflow and clustering parameters are unchanged. The native
 `--cluster-mode` option applies to both clustering passes. Nonresident AAStore
@@ -77,7 +79,8 @@ with dense keys starting at zero (`--id-offset 0`).
 `--aastore` and `--aastore 1` enable automatic preparation and AAStore reads.
 Without the option, or with `--aastore 0`, sequence reads always use native
 MMseqs2, even when a store is associated. The flag is forwarded to the
-`rescorediagonal` and `align` subprocesses. AAStore has no environment-variable
+`rescorediagonal`, `align`, `result2repseq`, and `createseqfiledb` subprocesses.
+AAStore has no environment-variable
 configuration in the MMseqs2 adapter.
 
 ## Database associations
@@ -89,8 +92,8 @@ AAStore IDs. The native data link or payload is retained. Associations only
 locate storage; they cannot enable AAStore reads.
 
 Without `--aastore`, both alignment stages use the unchanged native MMseqs2
-path. Direct `rescorediagonal` and `align` commands also accept `--aastore`
-to read an already prepared, associated store.
+path. Direct `rescorediagonal`, `align`, `result2repseq`, and `createseqfiledb`
+commands also accept `--aastore` to read an already prepared, associated store.
 
 ## Random-access pipeline
 
@@ -114,9 +117,40 @@ Each outer compute thread uses one AAStore I/O owner:
 
 With `io_uring`, packed reads remain in flight while the calling compute
 thread handles already completed ranges. PrefixMemory can also decode its
-resident prefix after the initial asynchronous submissions. FullMemory skips
-batch I/O and decodes each requested sequence into a reusable string;
+resident prefix after the initial asynchronous submissions. During rescoring
+and alignment, FullMemory skips batch I/O and decodes each requested sequence into a reusable string;
 Alignment then calls `Sequence::mapSequence` to fill its existing numeric buffer.
+
+## Sequence export
+
+Export keeps the native `schedule(dynamic, 100)` cluster assignment. Each
+thread collects members until their decoded sequence and header sizes reach
+approximately 64 MiB, calls AAStore once for the sequences, and formats them
+in their original member order. Small clusters share a batch; large clusters
+span multiple batches on the same thread. Header data still
+comes from native `DBReader::getData`, including its existing preload policy;
+there is no new header reader or header sorting. Duplicate sequences can share
+batch storage without removing repeated members from the output.
+
+Each cluster still produces one complete database record: `writeStart` is
+called once, fragments are appended with `writeAdd`, and only the final
+fragment calls `writeEnd`. The output string is reused between fragments
+instead of growing to the full cluster size. The threshold is not a hard
+memory cap: individual members are not split, bookkeeping adds overhead,
+and native compressed output still buffers the compressed record internally.
+Threads fetch and flush their own batches independently; `nowait` lets each
+thread flush its final partial batch before the parallel region's final join,
+without a global batch barrier. `result2repseq` follows the same
+approach but only counts/reads representatives; `result2flat` still supplies
+their headers later. FullMemory exports use the same batch interface with
+resident packed data. The adapter's output arena is reused between batches.
+
+`createseqfiledb` reserves space for header pages, cluster records, and native
+output buffers before choosing the AAStore prefix. Headers and result indexes
+are opened before the memory sample. Sequence content follows AAStore's existing
+normalization rules; this does not restore original sequence letter case or
+unsupported characters discarded or normalized during store construction.
+Native header text is preserved.
 
 ## Memory policy
 
@@ -165,6 +199,10 @@ python3 src/test/test_aastore_cli.py \
 python3 src/test/test_aastore_linclust.py \
   --mmseqs build-aastore/src/mmseqs \
   --workdir /tmp/aastore-linclust-test
+
+python3 src/test/test_aastore_exports.py \
+  --mmseqs build-aastore/src/mmseqs \
+  --workdir /tmp/aastore-export-test
 ```
 
 The unit test covers memory budgeting, all three storage modes, both I/O
@@ -179,3 +217,8 @@ The automatic CLI test compares encoded stores with the public FASTA builder
 after native export, including shuffled, unshuffled, soft, compressed and
 multiple-input databases. It compares native and AAStore workflow results,
 tests reuse/rebuild behavior and verifies easy-workflow cleanup.
+It also compares representative/all-sequence FASTA outputs and checks export
+flag propagation. Export tests compare records and member order for shuffled,
+compressed and subset databases, repeated members, empty sequences, HH output,
+cluster filters, 64 MiB boundaries, multi-batch cluster records, and disk-backed batches. They also check
+that AAStore exports do not require the native sequence payload.

@@ -38,8 +38,12 @@ if notExists "${TMP_PATH}/rep_seq.fasta"; then
 fi
 
 if notExists "${TMP_PATH}/all_seqs.fasta"; then
+    CREATESEQFILEDB_PAR="${THREADS_PAR}"
+    if [ -n "${AASTORE}" ]; then
+        CREATESEQFILEDB_PAR="${CREATESEQFILEDB_PAR} --aastore 1"
+    fi
     # shellcheck disable=SC2086
-    "$MMSEQS" createseqfiledb "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/clu_seqs" ${THREADS_PAR} \
+    "$MMSEQS" createseqfiledb "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/clu_seqs" ${CREATESEQFILEDB_PAR} \
             || fail "Result2repseq  died"
 
     # shellcheck disable=SC2086

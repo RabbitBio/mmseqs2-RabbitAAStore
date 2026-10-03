@@ -15,8 +15,9 @@ cd ..
 ```
 
 `--aastore` automatically builds sequence storage in the final native ID order
-(including shuffle) and uses it during rescoring/alignment. Native sequence
-files, clustering parameters and exports are unchanged. `easy-cluster`,
+(including shuffle) and uses it during rescoring/alignment and sequence export.
+Native sequence files, clustering parameters, header reads and output formats
+are retained. `easy-cluster`,
 `createdb`, `linclust` and `cluster` also accept the option. See
 [AAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
 The upstream prebuilt binaries listed below do not include this option.
