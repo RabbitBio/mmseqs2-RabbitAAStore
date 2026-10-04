@@ -85,6 +85,7 @@ the experiment starts cold **before open**, not immediately before every fetch.
 ## Run
 
 ```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAASTORE_BUILD_BENCHMARKS=ON
 cmake --build build --target aastore_bench aastore_build -j 8
 python3 benchmarks/run_cold_matrix.py /path/to/full/store /path/to/new/results \
   --label UniRef100_2026_03 --percents 1 5 10 --threads 1 4 16 64 \

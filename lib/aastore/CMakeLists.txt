@@ -16,11 +16,17 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(AASTORE_IS_TOP_LEVEL ON)
     option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 endif()
-option(AASTORE_BUILD_TESTS "Build AAStore tests" ${AASTORE_IS_TOP_LEVEL})
+option(AASTORE_BUILD_TESTS "Build the full AAStore regression tests" OFF)
 option(AASTORE_BUILD_TOOLS "Build AAStore command-line tools" ${AASTORE_IS_TOP_LEVEL})
-option(AASTORE_BUILD_BENCHMARKS "Build AAStore benchmarks" ${AASTORE_IS_TOP_LEVEL})
+option(AASTORE_BUILD_BENCHMARKS "Build AAStore benchmarks" OFF)
 option(AASTORE_BUILD_PYTHON "Build the Python bindings" OFF)
 option(AASTORE_ENABLE_IO_URING "Enable the Linux io_uring read backend" ON)
+set(AASTORE_SMOKE_DEFAULT ${AASTORE_IS_TOP_LEVEL})
+if(CMAKE_CROSSCOMPILING)
+    set(AASTORE_SMOKE_DEFAULT OFF)
+endif()
+option(AASTORE_RUN_SMOKE_TESTS "Run small environment checks as part of the default build"
+       ${AASTORE_SMOKE_DEFAULT})
 
 set(AASTORE_IPO_DEFAULT ${AASTORE_IS_TOP_LEVEL})
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
@@ -231,149 +237,27 @@ endif()
 if(AASTORE_BUILD_TOOLS)
     add_executable(aastore_build tools/build_store.cpp)
     target_link_libraries(aastore_build PRIVATE aastore)
-    add_executable(aastore_sort_block tools/sort_block.cpp)
-    target_link_libraries(aastore_sort_block PRIVATE aastore)
-    add_executable(aastore_reorder_createdb tools/reorder_createdb.cpp)
-    target_include_directories(aastore_reorder_createdb PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(aastore_reorder_createdb PRIVATE aastore)
     file(RELATIVE_PATH _aastore_tools_libdir
         "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set_target_properties(aastore_build aastore_sort_block aastore_reorder_createdb
+        set_target_properties(aastore_build
             PROPERTIES INSTALL_RPATH "$ORIGIN/${_aastore_tools_libdir}")
     endif()
     unset(_aastore_tools_libdir)
-    install(TARGETS aastore_build aastore_sort_block aastore_reorder_createdb
+    install(TARGETS aastore_build
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 endif()
 
 if(AASTORE_BUILD_BENCHMARKS)
     add_executable(aastore_bench benchmarks/read_benchmark.cpp)
     target_link_libraries(aastore_bench PRIVATE aastore)
-    add_executable(linclust_candidate_bench tools/linclust_candidate_benchmark.cpp)
-    target_link_libraries(linclust_candidate_bench PRIVATE aastore)
-    add_executable(aastore_window_bench tools/window_read_benchmark.cpp)
-    target_link_libraries(aastore_window_bench PRIVATE aastore)
+endif()
+
+if(AASTORE_BUILD_TESTS OR AASTORE_RUN_SMOKE_TESTS)
+    enable_testing()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.cmake")
 endif()
 
 if(AASTORE_BUILD_TESTS)
-    enable_testing()
-    if(AASTORE_BUILD_PYTHON AND NOT CMAKE_CROSSCOMPILING)
-        add_test(NAME aastore_python_test
-            COMMAND ${CMAKE_COMMAND} -E env
-                "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/python"
-                ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python_test.py)
-    endif()
-    add_executable(aastore_test tests/store_test.cpp)
-    target_link_libraries(aastore_test PRIVATE aastore)
-    add_executable(aastore_options_test tests/options_test.cpp)
-    target_link_libraries(aastore_options_test PRIVATE aastore)
-    add_test(NAME aastore_options_test COMMAND aastore_options_test)
-    set_tests_properties(aastore_options_test PROPERTIES LABELS "options")
-    set(_aastore_runtime_tests aastore_options_test aastore_codec_test)
-    foreach(_aastore_group IN ITEMS builder random sequential text concurrency)
-        add_test(NAME aastore_store_${_aastore_group}
-            COMMAND aastore_test --group ${_aastore_group})
-        list(APPEND _aastore_runtime_tests aastore_store_${_aastore_group})
-        set_tests_properties(aastore_store_${_aastore_group} PROPERTIES
-            LABELS "store;${_aastore_group}")
-    endforeach()
-    unset(_aastore_group)
-    add_executable(aastore_codec_test tests/codec_test.cpp)
-    target_link_libraries(aastore_codec_test PRIVATE aastore)
-    add_test(NAME aastore_codec_test COMMAND aastore_codec_test)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # Compile the real backend against a private delayed-I/O shim, so old
-        # kernel paths are tested even when the host disables io_uring.
-        foreach(_aastore_uring_test IN ITEMS
-                aastore_io_uring_compat_test aastore_io_uring_baseline_test)
-            add_executable(${_aastore_uring_test}
-                tests/io_uring_compat_test.cpp src/io_uring_backend.cpp)
-            target_include_directories(${_aastore_uring_test} BEFORE PRIVATE
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests/uring_compat")
-            target_compile_definitions(${_aastore_uring_test} PRIVATE
-                AASTORE_HAVE_IO_URING=1)
-            target_link_libraries(${_aastore_uring_test} PRIVATE aastore)
-            add_test(NAME ${_aastore_uring_test} COMMAND ${_aastore_uring_test})
-            list(APPEND _aastore_runtime_tests ${_aastore_uring_test})
-            set_tests_properties(${_aastore_uring_test} PROPERTIES
-                LABELS "compatibility;io_uring")
-        endforeach()
-        unset(_aastore_uring_test)
-        target_compile_definitions(aastore_io_uring_compat_test PRIVATE
-            AASTORE_URING_HAS_READ=1 AASTORE_URING_HAS_PROBE=1)
-        target_compile_definitions(aastore_io_uring_baseline_test PRIVATE
-            AASTORE_TEST_LEGACY_LIBURING=1)
-    endif()
-    if(AASTORE_HAVE_IO_URING)
-        target_compile_definitions(aastore_test PRIVATE AASTORE_TEST_IO_URING=1)
-        add_executable(aastore_io_uring_test tests/io_uring_test.cpp)
-        target_link_libraries(aastore_io_uring_test PRIVATE aastore)
-        add_test(NAME aastore_io_uring_test COMMAND aastore_io_uring_test)
-        list(APPEND _aastore_runtime_tests aastore_io_uring_test)
-        set_tests_properties(aastore_io_uring_test PROPERTIES SKIP_RETURN_CODE 77)
-    endif()
-    find_package(Python3 COMPONENTS Interpreter QUIET)
-    if(Python3_Interpreter_FOUND AND NOT CMAKE_CROSSCOMPILING
-       AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
-       AND TARGET aastore_build AND TARGET aastore_bench)
-        add_test(NAME aastore_benchmark_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py
-                $<TARGET_FILE:aastore_build> $<TARGET_FILE:aastore_bench>)
-    endif()
-    if(CMAKE_CROSSCOMPILING)
-        message(STATUS "Cross build: host Python and benchmark script tests are not registered")
-        if(NOT CMAKE_CROSSCOMPILING_EMULATOR)
-            set_tests_properties(${_aastore_runtime_tests} PROPERTIES DISABLED TRUE)
-            message(STATUS "Cross build without emulator: target runtime tests are disabled")
-        endif()
-    endif()
-    unset(_aastore_runtime_tests)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/tests/install_consumer/run.cmake")
-    set(_aastore_consumer_toolchain_cache
-        "${CMAKE_CURRENT_BINARY_DIR}/install-consumer-toolchain.cmake")
-    aastore_write_consumer_toolchain_cache("${_aastore_consumer_toolchain_cache}")
-    add_test(NAME aastore_install_consumer
-        COMMAND ${CMAKE_COMMAND}
-            "-DAASTORE_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
-            "-DAASTORE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-            "-DAASTORE_TEST_CONFIG=$<CONFIG>"
-            "-DAASTORE_TEST_GENERATOR=${CMAKE_GENERATOR}"
-            "-DAASTORE_TEST_GENERATOR_PLATFORM=${CMAKE_GENERATOR_PLATFORM}"
-            "-DAASTORE_TEST_GENERATOR_TOOLSET=${CMAKE_GENERATOR_TOOLSET}"
-            "-DAASTORE_TEST_TOOLCHAIN_CACHE=${_aastore_consumer_toolchain_cache}"
-            "-DAASTORE_TEST_CROSSCOMPILING=${CMAKE_CROSSCOMPILING}"
-            "-DAASTORE_TEST_CTEST=${CMAKE_CTEST_COMMAND}"
-            "-DAASTORE_TEST_PACKAGE_DIR=${AASTORE_CMAKE_INSTALL_DIR}"
-            "-DAASTORE_TEST_URING_INCLUDE_DIR=${AAStoreUring_INCLUDE_DIR}"
-            "-DAASTORE_TEST_URING_LIBRARY=${AAStoreUring_LIBRARY}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_consumer/run.cmake")
-    set_tests_properties(aastore_install_consumer PROPERTIES LABELS packaging)
-    unset(_aastore_consumer_toolchain_cache)
-    if(NOT CMAKE_CROSSCOMPILING AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-        add_test(NAME aastore_cmake_uring_cross_probe
-            COMMAND ${CMAKE_COMMAND}
-                "-DAASTORE_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/uring-cross-probe-$<CONFIG>"
-                "-DAASTORE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-                "-DAASTORE_TEST_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
-                "-DAASTORE_TEST_GENERATOR=${CMAKE_GENERATOR}"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/uring_cross_probe.cmake")
-        set_tests_properties(aastore_cmake_uring_cross_probe PROPERTIES
-            LABELS "compatibility;cmake;io_uring")
-        add_test(NAME aastore_cmake_cross_consumer
-            COMMAND ${CMAKE_COMMAND}
-                "-DAASTORE_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
-                "-DAASTORE_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/cross-consumer-$<CONFIG>"
-                "-DAASTORE_TEST_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-                "-DAASTORE_TEST_CXX_FLAGS=${CMAKE_CXX_FLAGS}"
-                "-DAASTORE_TEST_CONFIG=$<CONFIG>"
-                "-DAASTORE_TEST_GENERATOR=${CMAKE_GENERATOR}"
-                "-DAASTORE_TEST_CTEST=${CMAKE_CTEST_COMMAND}"
-                "-DAASTORE_TEST_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}"
-                "-DAASTORE_TEST_SYSTEM_PROCESSOR=${CMAKE_SYSTEM_PROCESSOR}"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/cross_consumer.cmake")
-        set_tests_properties(aastore_cmake_cross_consumer PROPERTIES
-            LABELS "compatibility;cmake;packaging")
-    endif()
+    include("${CMAKE_CURRENT_SOURCE_DIR}/tests/regression.cmake")
 endif()

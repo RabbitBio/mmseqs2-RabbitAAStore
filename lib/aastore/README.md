@@ -53,16 +53,26 @@ pkg-config 元数据会传递所需链接库。
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 4
-(cd build && ctest --output-on-failure)
 ```
+
+独立本机默认构建后自动运行环境小测试：临时 FASTA 建库、单/多线程 `pread`、
+前缀/全内存读取、常驻文本、`Auto` 和 `io_uring`；启用 Python 构建时也检查导入与读写。
+小数据自动生成和清理，不需要下载数据或 root 权限。失败使构建返回非零；
+io_uring 不可用时该 case 显示 `Skipped` 和原因，`Auto` 读取仍必须通过。
+可用 `-DAASTORE_RUN_SMOKE_TESTS=OFF` 关闭自动检查，或用
+`(cd build && ctest -L smoke -V)` 单独重跑。嵌入 MMseqs 和交叉编译时默认不自动执行；
+交叉运行须配置 emulator。显式只编译 `--target aastore` 或 Python wheel 不触发自动检查。
 
 Store 测试按 `builder`、`random`、`sequential`、`text`、`concurrency` 分组，可单独
 选择；`options` 检查配置校验。`compatibility` 检查旧内核、旧 liburing 读取路径和
-CMake 交叉编译流程，即使宿主禁用 io_uring 也会运行。默认测试命令仍运行全部测试：
+CMake 交叉编译流程，即使宿主禁用 io_uring 也能验证兼容路径。
+完整回归测试默认不编译；需要时进入 `tests/`，直接运行：
 
 ```bash
-(cd build && ctest -L sequential --output-on-failure)
-(cd build && ctest -L compatibility --output-on-failure)
+cd tests
+make       # 仅编译，产物放在 tests/build/
+make test  # 可选：运行测试
+make test CTEST_ARGS='-L sequential'
 ./build/aastore_test --group text
 ```
 
@@ -71,14 +81,15 @@ sysroot、编译参数和 `CMAKE_CROSSCOMPILING_EMULATOR`；有模拟器时运�
 无模拟器时只验证配置与构建，并禁用目标程序的运行测试。当前 Python 和 benchmark
 脚本测试只在本机构建中注册。
 
-顶层构建默认启用工具、基准和测试；通过 `add_subdirectory` 接入其他项目时，三者默认
-关闭。可分别用 `AASTORE_BUILD_TOOLS`、`AASTORE_BUILD_BENCHMARKS`、`AASTORE_BUILD_TESTS`
-覆盖默认值。仅构建并安装 C++ 库：
+顶层构建默认启用建库工具和环境自检，完整回归和 benchmark 默认关闭。
+通过 `add_subdirectory` 接入时，工具和环境自检也默认关闭；选项可显式覆盖。
+测试 Makefile 说明见 [tests/README.md](tests/README.md)。旧构建目录会保留原来的 CMake
+开关设置。以下命令在 AAStore 根目录执行，仅构建并安装 C++ 库：
 
 ```bash
 cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release \
   -DAASTORE_BUILD_TOOLS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF \
-  -DAASTORE_BUILD_TESTS=OFF
+  -DAASTORE_BUILD_TESTS=OFF -DAASTORE_RUN_SMOKE_TESTS=OFF
 cmake --build build-sdk -j 4
 cmake --install build-sdk --prefix "$HOME/.local"
 ```
@@ -219,19 +230,6 @@ aastore::build_fasta("proteins.fa", "proteins.aastore", options);
 sequence ID 按 FASTA 中的记录顺序从 `0` 开始分配。建库程序会打印序列数、
 残基数、各数据列大小和总耗时。返回成功前，构建器会同步所有临时文件，再切换正式
 文件名并同步库目录；因此 `build_seconds` 包含等待数据持久化到底层存储的时间。
-
-MMseqs2 默认 `createdb --shuffle 1` 使用固定的 32 路轮转顺序。需要让物理 ID 与
-shuffle 后的 MMseqs2 本地 ID 一致时，先建临时顺序库，再执行：
-
-```bash
-./build/aastore_reorder_createdb \
-  proteins.aastore.input-order proteins.aastore \
-  --threads 8 --remove-source
-```
-
-工具顺序扫描源库，按原 ID 的 `id % 32` 分流后依次合并 32 个分片。最终库完整同步
-并提交后才删除源库；失败时源库保留。该工具只生成序列列，且只适配普通
-`createdb` 的默认 32 路 shuffle，不适用于 GPU/按长度重排。
 
 ## 使用
 

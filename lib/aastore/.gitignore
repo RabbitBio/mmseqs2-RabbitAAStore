@@ -1,12 +1,14 @@
 # CMake build trees
 /build*/
 /cmake-build-*/
+/tests/build/
 
 # Generated build files
 CMakeCache.txt
 CMakeFiles/
 CTestTestfile.cmake
 Makefile
+!/tests/Makefile
 cmake_install.cmake
 compile_commands.json
 
