@@ -29,6 +29,8 @@ sdist.include = [
     "/VERSION", "/CMakeLists.txt", "/README.md", "/CHANGELOG.md", "/LICENSE*", "/pyproject.toml",
     "/include/**", "/src/**", "/cmake/**", "/python/**", "/examples/**",
     "/docs/**", "/tests/**", "/tools/**", "/benchmarks/**",
+    "!/tests/aastore_build", "!/tests/aastore_bench", "!/tests/aastore_test", "!/tests/aastore_*_test",
+    "!/examples/.objects/**", "!/examples/aastore_example", "!/examples/output/**",
     "!/tests/build/**", "!**/__pycache__/**", "!**/*.py[cod]",
 ]
 sdist.exclude = ["/paper/", "/build*/", "/cmake-build-*/", "/tests/build/", "/dist/", "__pycache__/"]

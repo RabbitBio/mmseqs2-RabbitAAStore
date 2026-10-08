@@ -4,12 +4,21 @@ AAStore 的 Python 包直接调用 C++ 建库和读取核心。通常先用 `bui
 生成库目录，再通过 `Store` 读取序列或记录；批次结果同时提供 Python 字符串访问和
 只读字节视图。包内包含 `.pyi` 和 `py.typed`，供编辑器与类型检查器识别公开接口。
 
-两个独立示例会自行创建小 FASTA，并用临时目录保存和清理数据库，无需外部输入或 NumPy：
+两个独立示例读取仓库自带的 `examples/data/huge_100k.fa`（100,000 条完整 FASTA 记录），
+每次在临时目录建库，结束时自动清理，无需另行准备输入或安装 NumPy。
+示例只展示少量记录；`buffer_layout.py` 展示首 4 条和包含重复 ID 的 4 条乱序批次，
+并按 `sequence_length()` 计算可复用输出缓冲的容量。
+在仓库根目录安装本地包并运行：
 
 ```bash
-python examples/python/basic.py
-python examples/python/buffer_layout.py
+python3 -m pip install . -Ccmake.define.AASTORE_ENABLE_IO_URING=ON
+python3 examples/python/basic.py
+python3 examples/python/buffer_layout.py
 ```
+
+安装命令开启 liburing 探测；开发库可用时编译 io_uring 后端，供示例的 `Auto` 选择，
+构建或运行环境不支持时回退到 `pread`。
+详细安装要求见下节，数据集信息见 [示例说明](../examples/README.md)。
 
 ## 1. 安装与输入
 
@@ -28,6 +37,8 @@ python -m pip install .
 NumPy 是可选的使用工具，不是 AAStore 的运行依赖。
 
 Python 包默认禁用 io_uring，使用 pread；portable wheels 工作流也采用此配置。
+新部署的内核建议见 [README 构建说明](../README.md#构建)；默认的 pread 后端不要求
+内核提供 io_uring。
 需要在本机启用 io_uring 时，先安装 liburing 开发包，再从源码构建：
 
 ```bash

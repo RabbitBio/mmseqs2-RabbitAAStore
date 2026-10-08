@@ -2,6 +2,13 @@
 /build*/
 /cmake-build-*/
 /tests/build/
+/tests/aastore_build
+/tests/aastore_bench
+/tests/aastore_test
+/tests/aastore_*_test
+/examples/.objects/
+/examples/aastore_example
+/examples/output/
 
 # Generated build files
 CMakeCache.txt
@@ -9,6 +16,7 @@ CMakeFiles/
 CTestTestfile.cmake
 Makefile
 !/tests/Makefile
+!/examples/Makefile
 cmake_install.cmake
 compile_commands.json
 

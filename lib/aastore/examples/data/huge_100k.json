@@ -1,0 +1,14 @@
+{
+  "dataset": "huge_100k.fa",
+  "source_file": "huge.fa",
+  "source_location_at_extraction": "/home/user_home/gaoyijie/huge.fa",
+  "selection": "first 100000 complete FASTA records, original headers and line wrapping preserved",
+  "sequences": 100000,
+  "residues": 35975590,
+  "bytes": 51154661,
+  "minimum_length": 6,
+  "maximum_length": 29283,
+  "first_header": "EFG1759503.1 decarboxylating NADP(+)-dependent phosphogluconate dehydrogenase [Escherichia coli]",
+  "last_header": "GFG89953.1 membrane protein [Mycobacterium bourgelatii]",
+  "extracted_at": "2026-10-08T13:35:34.767359+08:00"
+}

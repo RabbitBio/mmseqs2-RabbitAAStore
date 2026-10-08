@@ -1,5 +1,5 @@
-# 文件职责：演示只读布局、UTF-8 字节长度、输出复用与视图生命周期，仅使用临时文件。
-"""运行：python examples/python/buffer_layout.py；无需 NumPy 或外部输入。"""
+# 文件职责：读取示例数据集，演示只读布局、UTF-8 字节长度、输出复用与视图生命周期。
+"""运行：python examples/python/buffer_layout.py；读取 examples/data/huge_100k.fa，无需 NumPy。"""
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,22 +14,17 @@ def layout_bytes(storage, offsets, lengths):
 
 
 def main():
+    fasta = Path(__file__).resolve().parents[1] / "data" / "huge_100k.fa"
+    print("数据集：", fasta)
     with TemporaryDirectory(prefix="aastore-python-buffer-") as temporary:
         root = Path(temporary)
-        fasta = root / "input.fasta"
-        sequences = ["ACDEFG", "", "WY", "A"]
-        fasta.write_text(
-            ">alpha 中文描述\nACDEFG\n"
-            ">empty 空序列\n\n"
-            ">beta 第二条\nWY\n"
-            ">gamma 单残基\nA\n",
-            encoding="utf-8",
-        )
         path = root / "store"
-        aastore.build_fasta(fasta, path, threads=2)
-        reads = aastore.ReadOptions(threads=2, io_backend=aastore.IoBackend.Pread)
+        built = aastore.build_fasta(fasta, path, threads=2)
+        print("建库：", built.sequences, "条序列，", built.residues, "个残基")
+        reads = aastore.ReadOptions(threads=2, io_backend=aastore.IoBackend.Auto)
 
         with aastore.Store(path) as store:
+            sequential_end = 4
             ids = [2, 0, 1, 2]
             batch = store.get(ids, reads)
             storage, offsets, lengths = batch.storage, batch.offsets, batch.lengths
@@ -39,8 +34,8 @@ def main():
             print("随机批读完整字节区（逐项追加 NUL）：", bytes(storage))
             saved_view = batch.view(0)
 
-            sequential = store.sequential_get(0, len(store), reads)
-            print("顺读完整字节区（无 NUL）：", bytes(sequential.storage))
+            sequential = store.sequential_get(0, sequential_end)
+            print("顺读前 4 条的完整字节区（无 NUL）：", bytes(sequential.storage))
 
             fields = aastore.RecordFields.Description
             records = store.batch_get_records([0, 2], fields, reads)
@@ -52,7 +47,7 @@ def main():
             print("字符数与字节数：", len(descriptions[0]), text_lengths[0])
 
             # 为每个槽位预留最大容量，同一组 bytearray 可接收不同长度的请求。
-            capacity = max(map(len, sequences))
+            capacity = max(store.sequence_length(i) for i in range(sequential_end))
             outputs = [bytearray(capacity) for _ in ids]
             for requested in (ids, [0, 2, 1, 3]):
                 stats = store.get_into(requested, outputs, reads)
@@ -61,7 +56,7 @@ def main():
                 print("复用输出：", values, "请求数：", stats.requested_sequences)
 
             # 顺读使用相同缓冲约定，结果有效范围由本次序列长度决定。
-            store.sequential_get_into(0, len(store), outputs, reads)
+            store.sequential_get_into(0, sequential_end, outputs, reads)
             values = [bytes(output[:store.sequence_length(i)]).decode("ascii")
                       for i, output in enumerate(outputs)]
             print("直接顺读：", values)

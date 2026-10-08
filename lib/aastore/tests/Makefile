@@ -20,6 +20,7 @@ all: build
 configure:
 	"$(CMAKE)" -S "$(SOURCE_DIR)" -B "$(BUILD_DIR)" \
 		-DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" \
+		-DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$$<1:$(SOURCE_DIR)/tests>" \
 		-DAASTORE_BUILD_TESTS=ON -DAASTORE_RUN_SMOKE_TESTS=OFF \
 		-DAASTORE_BUILD_TOOLS=ON -DAASTORE_BUILD_BENCHMARKS=$(BENCHMARKS) \
 		-DAASTORE_BUILD_PYTHON=$(PYTHON) -DAASTORE_ENABLE_IO_URING=$(IO_URING) \
@@ -40,7 +41,7 @@ clean:
 help:
 	@printf '%s\n' \
 		'Run inside tests/:' \
-		'  make                                Compile tests into tests/build/' \
+		'  make                                Compile executables into tests/' \
 		'  make test                           Compile, then run all registered tests' \
 		'  make test CTEST_ARGS="-L sequential" Select a test label' \
 		'  make clean                          Clean compiled files, keeping the cache' \

@@ -16,7 +16,9 @@ make test CTEST_ARGS='-L sequential'
 make clean                     # 清理编译产物，保留配置和测试报告
 ```
 
-可执行文件和中间文件都放在 `tests/build/`，不会修改普通的 `build/`。
+编译好的可执行文件直接放在 `tests/`，例如 `./aastore_test`、`./aastore_build`
+和 `./aastore_bench`；CMake 缓存、库和中间文件放在 `tests/build/`。
+`make clean` 会清理这些编译产物，保留配置和测试报告。
 可通过 `BUILD_DIR=/absolute/path`、`BUILD_TYPE=Debug`、`JOBS=8` 覆盖。
 
 测试构建中关闭构建后自动自检，避免 `make test` 重复执行；自检仍会作为普通 CTest

@@ -12,6 +12,13 @@ C++17. This is an advisory support statement. Targets outside this scope remain
 unverified, with no compatibility guarantee. Scalar fallback and runtime SIMD
 dispatch cover instruction-set differences within supported x86_64 CPUs.
 
+For new deployments, prefer a distribution-maintained LTS kernel based on
+Linux 6.1 or later. This is deployment guidance; AAStore has not established
+a tested minimum kernel version. The pread backend does not require io_uring,
+and the Linux 5.4 READV compatibility path is retained. Consult the
+[kernel release information](https://www.kernel.org/category/releases.html)
+and the distribution's maintenance policy when choosing a kernel.
+
 Portable wheels target ordinary CPython 3.9–3.13 on Linux x86_64/glibc.
 The source package retains `requires-python = ">=3.9"`; newer CPython versions
 can be tried from source on the same platform but are outside the current
@@ -62,6 +69,39 @@ Database formats have their own identifiers: `AAPCMP3` for sequence metadata
 and `AATEXT1` for optional text columns. Package version changes do not by
 themselves require a database rebuild. A format change must document whether
 existing data remains readable and how to migrate it.
+
+## Selecting tests and cross-compiling
+
+Normal builds register only the environment smoke checks. To compile the full
+suite, enter `tests/` and run `make`; executables go directly into `tests/`,
+while intermediate files and the CMake cache stay in `tests/build/`.
+`make test` then runs all registered tests. Store tests have separate
+`builder`, `random`, `sequential`, `text`, and `concurrency` labels; `options`
+covers configuration validation. The `compatibility` label covers legacy kernel
+and liburing paths through a private shim, plus CMake cross-compilation checks,
+without requiring host io_uring support.
+
+```sh
+cd tests
+make
+make test
+make test CTEST_ARGS='-L sequential'
+make test CTEST_ARGS='-L compatibility'
+./aastore_test --group text
+```
+
+From the repository root, select a cross-compilation toolchain with `CMAKE_TOOLCHAIN_FILE`:
+
+```sh
+cmake -S . -B build-cross -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=/path/to/toolchain.cmake -DAASTORE_BUILD_TESTS=ON
+cmake --build build-cross -j 4
+(cd build-cross && ctest --output-on-failure)
+```
+
+Set `CMAKE_CROSSCOMPILING_EMULATOR` in the toolchain when target execution is
+available. As described above, without an emulator the target runtime tests
+are disabled, while the installed SDK still receives configure/build validation.
 
 ## Before a release
 

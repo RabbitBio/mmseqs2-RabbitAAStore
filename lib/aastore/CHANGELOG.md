@@ -22,6 +22,20 @@
   `--read-strategy` and `--scan-max-range` flags. Keep the existing Sparse
   gap/size-based merging and sequential read APIs. Use `ranges` instead of
   the removed `sparse_ranges` and `scan_ranges` counters; rebuild callers.
+- Consolidate API migration notes: update callers and rebuild after removing
+  dynamic sequence-cache modes and their admission/eviction statistics; choose
+  ByteRange, PrefixMemory, or FullMemory instead. Existing AAPCMP3 databases
+  do not need rebuilding for these API changes.
+- Replace read options `io_threads`, `io_uring_workers`, and `io_decode_threads`
+  with the shared `threads` budget; rename the Store option `preload_threads`
+  to `threads`. Remove `io_uring_max_bounded_workers` and its statistics;
+  AAStore does not configure or query kernel io-wq worker limits. Remove old
+  settings and remeasure CPU/I/O costs for highly concurrent workloads.
+- Remove the `sequential_get_into(..., Batch&, ...)` overload; use caller-owned
+  output buffers with the pointer-array overload and consume the returned
+  `BatchStats`.
+- Remove the benchmark's `--prefix-memory` switch; select a fixed packed prefix
+  with a positive `--memory-mb` or an exact `--memory-bytes` budget.
 - Consolidate engineering test fixtures in their runners and remove redundant
   probe cases and detailed toolchain snapshot checks while retaining legacy
   io_uring, linked dependency and installed SDK coverage.
