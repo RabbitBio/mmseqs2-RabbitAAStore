@@ -13,6 +13,7 @@
 #include "itoa.h"
 #include "FastSort.h"
 #include "Masker.h"
+#include <memory>
 
 #ifdef OPENMP
 #include <omp.h>
@@ -451,7 +452,12 @@ int createdb(int argc, const char **argv, const Command& command) {
         EXIT(EXIT_FAILURE);
     }
     DBWriter hdrWriter(hdrDataFile.c_str(), hdrIndexFile.c_str(), shuffleSplits, par.compressed, Parameters::DBTYPE_GENERIC_DB);
-    hdrWriter.open();
+    std::unique_ptr<AAStoreCreatedbTextWriter> aastoreTexts;
+    if (par.aastore) {
+        aastoreTexts = std::make_unique<AAStoreCreatedbTextWriter>(dataFile, shuffleSplits);
+    } else {
+        hdrWriter.open();
+    }
     DBWriter seqWriter(dataFile.c_str(), indexFile.c_str(), shuffleSplits, par.compressed, (dbType == -1) ? Parameters::DBTYPE_OMIT_FILE : dbType );
     seqWriter.open();
     size_t headerFileOffset = 0;
@@ -536,7 +542,7 @@ int createdb(int argc, const char **argv, const Command& command) {
         if (resetNotFile || resetIncorrectNewline) {
             par.createdbMode = Parameters::SEQUENCE_SPLIT_MODE_HARD;
             progress.reset(SIZE_MAX);
-            hdrWriter.close();
+            if (!par.aastore) hdrWriter.close();
             seqWriter.close();
             delete kseq;
             if (fclose(source) != 0) {
@@ -593,7 +599,7 @@ int createdb(int argc, const char **argv, const Command& command) {
                     Debug(Debug::WARNING) << "We recompute with --createdb-mode 1\n";
                     par.createdbMode = Parameters::SEQUENCE_SPLIT_MODE_HARD;
                     progress.reset(SIZE_MAX);
-                    hdrWriter.close();
+                    if (!par.aastore) hdrWriter.close();
                     seqWriter.close();
                     delete kseq;
                     if (fclose(source) != 0) {
@@ -623,12 +629,15 @@ int createdb(int argc, const char **argv, const Command& command) {
             // Finally write down the entry
             unsigned int splitIdx = id % shuffleSplits;
             sourceLookup[splitIdx].emplace_back(fileIdx);
+            if (aastoreTexts) {
+                aastoreTexts->append(std::string_view(header.data(), header.size() - 1), splitIdx);
+            }
             if (par.createdbMode == Parameters::SEQUENCE_SPLIT_MODE_SOFT) {
                 // +2 to emulate the \n\0
-                hdrWriter.writeIndexEntry(id, headerFileOffset + e.headerOffset, (e.sequenceOffset-e.headerOffset)+1, 0);
+                if (!par.aastore) hdrWriter.writeIndexEntry(id, headerFileOffset + e.headerOffset, (e.sequenceOffset-e.headerOffset)+1, 0);
                 seqWriter.writeIndexEntry(id, seqFileOffset + e.sequenceOffset, e.sequence.l+2, 0);
             } else if (par.createdbMode == Parameters::SEQUENCE_SPLIT_MODE_HARD) {
-                hdrWriter.writeData(header.c_str(), header.length(), id, splitIdx);
+                if (!par.aastore) hdrWriter.writeData(header.c_str(), header.length(), id, splitIdx);
                 seqWriter.writeStart(splitIdx);
                 seqWriter.writeAdd(e.sequence.s, e.sequence.l, splitIdx);
                 seqWriter.writeAdd(&newline, 1, splitIdx);
@@ -697,6 +706,8 @@ int createdb(int argc, const char **argv, const Command& command) {
         EXIT(EXIT_FAILURE);
     }
 
+    if (aastoreTexts) aastoreTexts->finish();
+
     // sort
     bool gpuCompatibleDB = false;
     Timer timer;
@@ -722,24 +733,25 @@ int createdb(int argc, const char **argv, const Command& command) {
         seqWriter.clearMemory();
         //TODO we cannot have compressed seq. dbs anymore if wanted ot have GPU compatible dbs
     } else {
-        hdrWriter.close(true, false);
+        if (!par.aastore) hdrWriter.close(true, false);
         seqWriter.close(true, false);
         if (par.shuffleDatabase == true) {
             DBWriter::createRenumberedDB(dataFile, indexFile, "", "", DBReader<unsigned int>::LINEAR_ACCCESS);
-            DBWriter::createRenumberedDB(hdrDataFile, hdrIndexFile, "", "", DBReader<unsigned int>::LINEAR_ACCCESS);
+            if (!par.aastore) DBWriter::createRenumberedDB(hdrDataFile, hdrIndexFile, "", "", DBReader<unsigned int>::LINEAR_ACCCESS);
         }
         if (par.createdbMode == Parameters::SEQUENCE_SPLIT_MODE_SOFT) {
             if (filenames.size() == 1) {
                 FileUtil::symlinkAbs(filenames[0], dataFile);
-                FileUtil::symlinkAbs(filenames[0], hdrDataFile);
+                if (!par.aastore) FileUtil::symlinkAbs(filenames[0], hdrDataFile);
             } else {
                 for (size_t fileIdx = 0; fileIdx < filenames.size(); fileIdx++) {
                     FileUtil::symlinkAbs(filenames[fileIdx], dataFile + "." + SSTR(fileIdx));
-                    FileUtil::symlinkAbs(filenames[fileIdx], hdrDataFile + "." + SSTR(fileIdx));
+                    if (!par.aastore) FileUtil::symlinkAbs(filenames[fileIdx], hdrDataFile + "." + SSTR(fileIdx));
                 }
             }
         }
-        if (par.writeLookup == true) {
+        if (par.writeLookup && aastoreTexts) aastoreTexts->writeLookup(dataFile, sourceLookup);
+        if (par.writeLookup && !par.aastore) {
             DBReader<unsigned int> readerHeader(hdrDataFile.c_str(), hdrIndexFile.c_str(), 1, DBReader<unsigned int>::USE_DATA | DBReader<unsigned int>::USE_INDEX);
             readerHeader.open(DBReader<unsigned int>::NOSORT);
             // create lookup file
@@ -791,7 +803,7 @@ int createdb(int argc, const char **argv, const Command& command) {
         dbType = DBReader<unsigned int>::setExtendedDbtype(dbType, Parameters::DBTYPE_EXTENDED_GPU);
     }
     DBWriter::writeDbtypeFile(seqWriter.getDataFileName(), dbType ,par.compressed);
-    DBWriter::writeDbtypeFile(hdrWriter.getDataFileName(), Parameters::DBTYPE_GENERIC_DB, par.compressed);
+    if (!par.aastore) DBWriter::writeDbtypeFile(hdrWriter.getDataFileName(), Parameters::DBTYPE_GENERIC_DB, par.compressed);
 
     Debug(Debug::INFO) << "Database type: " << Parameters::getDbTypeName(dbType) << "\n";
     if (dbInput == true) {
@@ -823,7 +835,14 @@ int createdb(int argc, const char **argv, const Command& command) {
 
     delete[] sourceLookup;
 
-    if (par.aastore) prepareAAStoreDatabase(dataFile, par.threads, true);
+    if (par.aastore) {
+        prepareAAStoreDatabase(dataFile, par.threads, true, aastoreTexts.get());
+        // A successful rebuild replaces any old native header DB as well;
+        // stale headers must not survive with IDs from a previous input.
+        if (FileUtil::fileExists(hdrIndexFile.c_str()) || FileUtil::fileExists((hdrDataFile + ".dbtype").c_str())) {
+            DBReader<unsigned int>::removeDb(hdrDataFile);
+        }
+    }
 
     return EXIT_SUCCESS;
 }

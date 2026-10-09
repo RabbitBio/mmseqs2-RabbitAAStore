@@ -1,6 +1,8 @@
 #include "AAStoreMemoryBudget.h"
 #include "AAStoreTargetReader.h"
 
+#include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -70,6 +72,42 @@ void check_memory_budget() {
     }
 }
 
+void check_record_memory_budget() {
+    constexpr uint64_t gib = UINT64_C(1024) * 1024 * 1024;
+    constexpr uint64_t mib = UINT64_C(1024) * 1024;
+    const auto enough = aastore_memory::plan_records(
+        64 * gib, 50 * gib, gib, gib, 2 * gib, 10 * gib, 64 * mib);
+    if (!enough.residentText || enough.textReserve != 10 * gib ||
+        enough.metadataReserve != 64 * mib ||
+        enough.memoryReserve < enough.safetyReserve + 14 * gib + 64 * mib ||
+        enough.memoryReserve + enough.cacheBytes + enough.pageCacheReserve !=
+            enough.memoryAvailable) {
+        throw std::runtime_error("resident records budget lost a reserve");
+    }
+    const auto constrained = aastore_memory::plan_records(
+        16 * gib, 12 * gib, gib, gib, 2 * gib, 8 * gib, 64 * mib);
+    if (constrained.residentText || constrained.textReserve != 0 ||
+        constrained.metadataReserve != 64 * mib ||
+        constrained.memoryReserve + constrained.cacheBytes +
+            constrained.pageCacheReserve != constrained.memoryAvailable) {
+        throw std::runtime_error("records budget failed to fall back");
+    }
+    const auto empty = aastore_memory::plan_records(
+        64 * gib, 50 * gib, gib, gib, 2 * gib, 0, 64 * mib);
+    if (empty.textReserve != 0 || empty.metadataReserve != 64 * mib ||
+        empty.memoryReserve + empty.cacheBytes + empty.pageCacheReserve !=
+            empty.memoryAvailable) {
+        throw std::runtime_error("empty text columns changed the budget");
+    }
+    const uint64_t maximum = std::numeric_limits<uint64_t>::max();
+    const auto exhausted = aastore_memory::plan_records(
+        64 * gib, 50 * gib, maximum, maximum, maximum, maximum, maximum);
+    if (exhausted.residentText || exhausted.cacheBytes != 0 ||
+        exhausted.remainingPool != 0 || exhausted.memoryReserve != maximum) {
+        throw std::runtime_error("overflow enabled resident records");
+    }
+}
+
 void check_batch(
         AAStoreTargetReader& reader,
         const std::vector<std::string>& source,
@@ -125,16 +163,100 @@ void check_batch(
     }
 }
 
+void check_scoring_views(const std::filesystem::path& directory,
+                         const std::string& store,
+                         const std::string& database,
+                         const std::vector<std::string>& source) {
+    // This fixture has no native sequence payload or .index. Fresh full-store
+    // associations must use stable AAStore keys without rebuilding an index.
+    AAStoreTargetReader full;
+    if (!full.openForScoring(database, 4, 0, true) || full.size() != source.size())
+        throw std::runtime_error("full scoring view depended on a native index");
+    uint64_t total = 0, maximum = 0;
+    for (unsigned int key = 0; key < source.size(); ++key) {
+        total += source[key].size();
+        maximum = std::max(maximum, static_cast<uint64_t>(source[key].size()));
+        if (full.getId(key) != key || full.getDbKey(key) != key)
+            throw std::runtime_error("full scoring view changed stable sequence keys");
+    }
+    if (full.totalLength() != total || full.maxSequenceLength() != maximum ||
+        full.getId(static_cast<unsigned int>(source.size())) != UINT_MAX)
+        throw std::runtime_error("full scoring view has incorrect metadata or bounds");
+
+    const std::string subset = (directory / "subset").string();
+    const std::vector<uint32_t> keys{0, 2, 4, 5};
+    AAStoreTargetReader::associateSubsetDatabase(subset, store, {5, 0, 4, 2});
+    AAStoreTargetReader view;
+    if (!view.openForScoring(subset, 4, 0, true) || view.size() != keys.size())
+        throw std::runtime_error("subset scoring view depended on a native index");
+    total = 0;
+    maximum = 0;
+    for (size_t id = 0; id < keys.size(); ++id) {
+        const unsigned int key = keys[id];
+        total += source[key].size();
+        maximum = std::max(maximum, static_cast<uint64_t>(source[key].size()));
+        if (view.getId(key) != id || view.getDbKey(id) != key ||
+            view.sequenceLength(id) != source[key].size())
+            throw std::runtime_error("subset scoring view lost its original key mapping");
+    }
+    if (view.totalLength() != total || view.maxSequenceLength() != maximum ||
+        view.getId(1) != UINT_MAX || view.getId(3) != UINT_MAX)
+        throw std::runtime_error("subset scoring view admitted a nonmember key");
+    check_batch(view, source, keys, 4);
+
+    // Native createsubdb retains repeated index rows. AAStore's compact view
+    // keeps those local rows and uses the first row for a key lookup as well.
+    const std::string repeatedSubset = (directory / "repeated_subset").string();
+    AAStoreTargetReader::associateSubsetDatabase(repeatedSubset, store, {5, 0, 5});
+    AAStoreTargetReader repeated;
+    if (!repeated.openForScoring(repeatedSubset, 4, 0, true) ||
+        repeated.size() != 3 || repeated.getDbKey(0) != 0 ||
+        repeated.getDbKey(1) != 5 || repeated.getDbKey(2) != 5 ||
+        repeated.getId(5) != 1 || repeated.getId(1) != UINT_MAX ||
+        repeated.sequenceLength(2) != source[5].size() ||
+        repeated.maxSequenceLength() != std::max(source[0].size(), source[5].size()) ||
+        repeated.totalLength() != source[0].size() + 2 * source[5].size()) {
+        throw std::runtime_error("subset scoring view changed native repeated-key semantics");
+    }
+    // A view may have more local rows than physical sequences when repeated
+    // selections are present, without expanding the shared AAStore itself.
+    AAStoreTargetReader::associateSubsetDatabase(repeatedSubset, store,
+        std::vector<uint32_t>(source.size() + 1, 5));
+    AAStoreTargetReader extraRows;
+    if (!extraRows.openForScoring(repeatedSubset, 4, 0, true) ||
+        extraRows.size() != source.size() + 1 || extraRows.getId(5) != 0 ||
+        extraRows.getDbKey(source.size()) != 5 ||
+        extraRows.maxSequenceLength() != source[5].size() ||
+        extraRows.totalLength() != (source.size() + 1) * source[5].size()) {
+        throw std::runtime_error("subset scoring view rejected repeated rows beyond physical count");
+    }
+
+    // A marked subset cannot silently become a full-store view if its member
+    // table is missing, even though all excluded keys exist in packed.bin.
+    std::filesystem::remove(subset + ".aastore.ids");
+    bool rejected = false;
+    try {
+        AAStoreTargetReader missing;
+        missing.openForScoring(subset, 4, 0, true);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    if (!rejected)
+        throw std::runtime_error("subset without its member table became a full view");
+}
+
 }  // namespace
 
 int main() {
-    char path[] = "/tmp/mmseqs-aastore-reader.XXXXXX";
-    const char* created = ::mkdtemp(path);
+    std::string path = (std::filesystem::temp_directory_path() /
+                        "mmseqs-aastore-reader.XXXXXX").string();
+    const char* created = ::mkdtemp(path.data());
     if (!created) return 1;
     const std::filesystem::path directory(created);
 
     try {
         check_memory_budget();
+        check_record_memory_budget();
         aastore::BatchStats ioStats;
         aastore::BatchStats firstBatch;
         firstBatch.ranges = 3;
@@ -187,6 +309,7 @@ int main() {
             throw std::runtime_error(
                 "AAStore database association was not preserved");
         }
+        check_scoring_views(directory, store, database, source);
 
         const std::vector<uint32_t> keys{4, 2, 5, 0, 3, 1};
         for (const auto backend :
@@ -307,7 +430,7 @@ int main() {
 
         std::filesystem::remove_all(directory);
         std::cout
-            << "AAStore memory budget, association, random batches, "
+            << "AAStore sequence/records memory budgets, association, random batches, "
                "ID views, pread/io_uring, and FullMemory direct reads: passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what()

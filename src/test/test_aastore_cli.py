@@ -9,6 +9,10 @@ from pathlib import Path
 import random
 import shlex
 import subprocess
+import sys
+
+sys.dont_write_bytecode = True
+from test_aastore_exports import read_database
 
 
 def main():
@@ -43,10 +47,28 @@ def main():
         print(label + ': passed', flush=True)
 
     def compare_store(label, database):
-        # Use the public FASTA builder as an independent oracle for every key.
+        # Read native sequence data independently of header-free text columns.
         exported = root / (label + '_export.fa')
         expected = root / (label + '_expected')
-        run(label + '_export', [binary, 'convert2fasta', database, exported, '-v', '0'])
+        native = database
+        if int.from_bytes(Path(str(database) + '.dbtype').read_bytes(), 'little') >> 31:
+            native = root / (label + '_unpacked')
+            run(label + '_decompress', [binary, 'decompress', database, native,
+                                        '--threads', '1', '-v', '0'])
+        if native.is_symlink():
+            # Soft createdb synthesizes the terminal NUL for FASTA slices.
+            payload = native.read_bytes()
+            records = {key: payload[offset:offset + length - 1] + b'\0'
+                       for key, offset, length in (map(int, line.split()) for line in
+                           Path(str(native) + '.index').read_text().splitlines())}
+        else:
+            records = read_database(native)
+        with exported.open('wb') as output:
+            for key, record in sorted(records.items()):
+                output.write(b'>' + str(key).encode() + b'\n')
+                output.write(record[:-1])
+                if not record[:-1].endswith(b'\n'):
+                    output.write(b'\n')
         run(label + '_expected', [builder, exported, expected,
                                   '--sequences-only', '--threads', '1'])
         actual = Path(str(database) + '.aastore')
@@ -154,7 +176,7 @@ def main():
         log = run('direct_' + label, arguments)
         tsv = root / ('direct_' + label + '.tsv')
         run('direct_' + label + '_tsv', [binary, 'createtsv', database,
-                                       database, result, tsv, '-v', '0'])
+                                       database, result, tsv, '--aastore', '1', '-v', '0'])
         value = digest(tsv)
         if baseline is None:
             baseline = value
@@ -229,9 +251,11 @@ def main():
                 baseline_fastas = fastas
             check(label + '_fasta_results', fastas == baseline_fastas)
             check(label + '_reader', ('AAStore target enabled:' in log) == enabled)
-            for stage in ('result2repseq', 'createseqfiledb'):
-                check(label + '_' + stage + '_reader',
-                      ('AAStore ' + stage + ':' in log) == enabled)
+            check(label + '_direct_exports',
+                  log.count('AAStore aastoreexportfasta: batch_get_records fields=all') ==
+                  (2 if enabled else 0))
+            check(label + '_tsv_reader',
+                  ('AAStore createtsv: batch_get_records fields=name,description' in log) == enabled)
             if enabled:
                 stores = {store.resolve() for store in tmp.glob('*/input.aastore')}
                 check(label + '_automatic_store', len(stores) == 1)

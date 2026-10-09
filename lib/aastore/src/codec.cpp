@@ -198,9 +198,11 @@ uint64_t fix_stop_chars(uint64_t ascii) {
     constexpr uint64_t kHighBits = 0x8080808080808080ULL;
     const uint64_t stop_x = ascii ^ kStop;
     const uint64_t flank_x = ascii ^ kFlank;
+    // 两个异或结果的每字节都在 0..31；置高位后减 1 不会跨字节借位。
+    // 只有原字节为 0 时结果的高位清零，取反后得到精确的逐字节匹配掩码。
     const uint64_t high_mask =
-        ((stop_x - kLowBits) & ~stop_x & kHighBits) |
-        ((flank_x - kLowBits) & ~flank_x & kHighBits);
+        (~((stop_x | kHighBits) - kLowBits) |
+         ~((flank_x | kHighBits) - kLowBits)) & kHighBits;
     return ascii ^ ((high_mask >> 7) * 0x71ULL);
 }
 

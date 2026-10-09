@@ -618,6 +618,17 @@ void StoreFixture::check_builder() {
     }
     expect(annotation_rejected,
            "sequence-only stores report missing annotations on demand");
+    for (const bool name : {false, true}) {
+        bool length_rejected = false;
+        try {
+            if (name) (void)sequence_only_store.name_length(0);
+            else (void)sequence_only_store.description_length(0);
+        } catch (const std::runtime_error& error) {
+            length_rejected = std::string(error.what()) ==
+                (name ? "store has no name column" : "store has no description column");
+        }
+        expect(length_rejected, "text length reports missing columns like record reads");
+    }
 
     const std::filesystem::path names_only_path =
         temp.path() / "names_only_store";
@@ -1187,6 +1198,21 @@ void StoreFixture::check_text() {
         expect(records.sequence_view(i) == expected[ids[i]],
                "record batch sequence " + std::to_string(i));
     }
+    for (const aastore::Store* source : {&store, &full_store}) {
+        for (size_t id = 0; id < expected.size(); ++id) {
+            expect(source->name_length(id) == expected_names[id].size() &&
+                       source->description_length(id) == expected_descriptions[id].size(),
+                   "text lengths match record bytes including empty descriptions");
+        }
+        for (const bool name : {false, true}) {
+            bool rejected = false;
+            try {
+                if (name) (void)source->name_length(source->size());
+                else (void)source->description_length(source->size());
+            } catch (const std::out_of_range&) { rejected = true; }
+            expect(rejected, "text lengths reject the end sentinel as a record ID");
+        }
+    }
     expect(records.names.stats.requested_strings == ids.size() &&
                records.names.stats.requested_bytes ==
                    expected_names[6].size() + expected_names[1].size() +
@@ -1236,6 +1262,11 @@ void StoreFixture::check_text() {
             (opening.resident_descriptions ? built.description_bytes : 0);
         expect(loaded.resident_text_bytes() == resident_bytes,
                "resident text bytes count only enabled columns");
+        for (const auto id : ids) {
+            expect(loaded.name_length(id) == expected_names[id].size() &&
+                       loaded.description_length(id) == expected_descriptions[id].size(),
+                   "text length queries use metadata in every resident-column combination");
+        }
 
         for (const auto backend : {aastore::IoBackend::Pread, aastore::IoBackend::Auto}) {
             aastore::ReadOptions reading;
@@ -1333,7 +1364,27 @@ void StoreFixture::check_text() {
         if (!no_records) {
             expect(result.name_view(0) == "onlyname" && result.description_view(0).empty(),
                    "resident reads handle a completely empty description column");
+            expect(loaded.name_length(0) == 8 && loaded.description_length(0) == 0,
+                   "text length handles an entirely empty description column");
         }
+    }
+
+    const auto boundary_input = temp.path() / "text_lengths_boundary.fa";
+    {
+        std::ofstream input(boundary_input);
+        for (size_t id = 0; id < 4098; ++id) {
+            input << ">n" << id;
+            if (id % 7 != 0) input << ' ' << std::string(100 + id % 33, 'd');
+            input << "\nAC\n";
+        }
+    }
+    const auto boundary_path = temp.path() / "text_lengths_boundary";
+    aastore::build_fasta(boundary_input, boundary_path);
+    aastore::Store boundary_store(boundary_path);
+    for (const aastore::SequenceId id : {0, 1, 4095, 4096, 4097}) {
+        expect(boundary_store.name_length(id) == 1 + std::to_string(id).size() &&
+                   boundary_store.description_length(id) == (id % 7 == 0 ? 0 : 100 + id % 33),
+               "text lengths cross the compact-offset block boundary and final record");
     }
 }
 

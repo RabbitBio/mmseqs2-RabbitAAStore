@@ -390,6 +390,15 @@ std::vector<Command> baseCommands = {
 
 
 
+        {"aastoreexportfasta",   aastore_export_fasta, &par.aastoreexportfasta,   COMMAND_FORMAT_CONVERSION | COMMAND_EXPERT,
+                "Export clustered AAStore records directly to FASTA",
+                NULL,
+                "AAStore integration",
+                "<i:sequenceDB> <i:clusterDB> <o:fastaFile>",
+                CITATION_MMSEQS2, {{"sequenceDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb },
+                    {"clusterDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::resultDb },
+                    {"fastaFile", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::flatfile }}},
+
         {"createtaxdb",          createtaxdb,          &par.createtaxdb,          COMMAND_TAXONOMY,
                 "Add taxonomic labels to sequence DB",
                 NULL,

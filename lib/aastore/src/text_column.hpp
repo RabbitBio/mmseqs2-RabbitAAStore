@@ -32,6 +32,8 @@ public:
     // 批量读取文本，结果按请求顺序访问，文本不追加 NUL。
     TextBatch batch_get(const std::vector<SequenceId>& ids,
                         const ReadOptions& options) const;
+    // 从已映射的记录边界取得文本字节数，不读取正文。
+    uint64_t length(SequenceId id) const;
     // 返回常驻模式下的数据大小，不含元数据且不代表实时 RSS。
     uint64_t resident_bytes() const noexcept;
 

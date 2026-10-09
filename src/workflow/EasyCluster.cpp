@@ -74,6 +74,10 @@ int easycluster(int argc, const char **argv, const Command &command) {
     cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clusterworkflow, true).c_str());
     cmd.addVariable("CLUSTER_MODULE", "cluster");
     cmd.addVariable("RESULT2REPSEQ_PAR", par.createParameterString(par.result2repseq).c_str());
+    cmd.addVariable("AASTORE_EXPORT_PAR", par.createParameterString(par.aastoreexportfasta).c_str());
+    par.aastoreRepresentativeOnly = true;
+    cmd.addVariable("AASTORE_REP_EXPORT_PAR", par.createParameterString(par.aastoreexportfasta).c_str());
+    par.aastoreRepresentativeOnly = false;
     cmd.addVariable("THREADS_PAR", par.createParameterString(par.onlythreads).c_str());
     cmd.addVariable("VERBOSITY_PAR", par.createParameterString(par.onlyverbosity).c_str());
 

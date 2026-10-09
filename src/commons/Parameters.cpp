@@ -205,6 +205,7 @@ Parameters::Parameters():
         PARAM_CREATEDB_MODE(PARAM_CREATEDB_MODE_ID, "--createdb-mode", "Createdb mode", "Createdb mode 0: copy data, 1: soft link data and write new index (works only with single line fasta/q) 2: GPU compatible db", typeid(int), (void *) &createdbMode, "^[0-2]{1}$"),
         PARAM_SHUFFLE(PARAM_SHUFFLE_ID, "--shuffle", "Shuffle input database", "Shuffle input database", typeid(bool), (void *) &shuffleDatabase, ""),
         PARAM_AASTORE(PARAM_AASTORE_ID, "--aastore", "Use AAStore", "Automatically build and use AAStore sequence storage (amino-acid databases only)", typeid(bool), (void *) &aastore, ""),
+        PARAM_AASTORE_REPRESENTATIVE_ONLY(PARAM_AASTORE_REPRESENTATIVE_ONLY_ID, "--representative-only", "Representatives only", "Directly export representative records instead of clustered member FASTA", typeid(bool), (void *) &aastoreRepresentativeOnly, ""),
         PARAM_WRITE_LOOKUP(PARAM_WRITE_LOOKUP_ID, "--write-lookup", "Write lookup file", "write .lookup file containing mapping from internal id, fasta id and file number", typeid(int), (void *) &writeLookup, "^[0-1]{1}", MMseqsParameter::COMMAND_EXPERT),
         PARAM_USE_HEADER_FILE(PARAM_USE_HEADER_FILE_ID, "--use-header-file", "Use header DB", "use the sequence header DB instead of the body to map the entry keys", typeid(bool), (void *) &useHeaderFile, ""),
         // setextendeddbtype
@@ -596,6 +597,7 @@ Parameters::Parameters():
     createtsv.push_back(&PARAM_IDX_SEQ_SRC);
     createtsv.push_back(&PARAM_DB_OUTPUT);
     createtsv.push_back(&PARAM_THREADS);
+    createtsv.push_back(&PARAM_AASTORE);
     createtsv.push_back(&PARAM_COMPRESSED);
     createtsv.push_back(&PARAM_V);
 
@@ -879,7 +881,6 @@ Parameters::Parameters():
     result2flat.push_back(&PARAM_V);
 
     // result2repseq
-    result2repseq.push_back(&PARAM_AASTORE);
     result2repseq.push_back(&PARAM_PRELOAD_MODE);
     result2repseq.push_back(&PARAM_COMPRESSED);
     result2repseq.push_back(&PARAM_THREADS);
@@ -900,7 +901,6 @@ Parameters::Parameters():
     translatenucs.push_back(&PARAM_THREADS);
 
     // createseqfiledb
-    createseqfiledb.push_back(&PARAM_AASTORE);
     createseqfiledb.push_back(&PARAM_MIN_SEQUENCES);
     createseqfiledb.push_back(&PARAM_MAX_SEQUENCES);
     createseqfiledb.push_back(&PARAM_HH_FORMAT);
@@ -908,6 +908,15 @@ Parameters::Parameters():
     createseqfiledb.push_back(&PARAM_THREADS);
     createseqfiledb.push_back(&PARAM_COMPRESSED);
     createseqfiledb.push_back(&PARAM_V);
+
+    // Direct, records-based AAStore cluster FASTA export.
+    aastoreexportfasta.push_back(&PARAM_AASTORE);
+    aastoreexportfasta.push_back(&PARAM_AASTORE_REPRESENTATIVE_ONLY);
+    aastoreexportfasta.push_back(&PARAM_MIN_SEQUENCES);
+    aastoreexportfasta.push_back(&PARAM_MAX_SEQUENCES);
+    aastoreexportfasta.push_back(&PARAM_HH_FORMAT);
+    aastoreexportfasta.push_back(&PARAM_THREADS);
+    aastoreexportfasta.push_back(&PARAM_V);
 
     // filterDb
     filterDb.push_back(&PARAM_FILTER_EXPRESSION);
@@ -2474,6 +2483,7 @@ void Parameters::setDefaults() {
     createdbMode = SEQUENCE_SPLIT_MODE_HARD;
     shuffleDatabase = true;
     aastore = false;
+    aastoreRepresentativeOnly = false;
     writeLookup = true;
 
     // format alignment

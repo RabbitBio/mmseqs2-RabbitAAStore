@@ -5,6 +5,9 @@
 #include "Util.h"
 #include "IndexReader.h"
 #include "FileUtil.h"
+#include "AAStoreTargetReader.h"
+#include "AAStoreTsvAdapter.h"
+#include "TsvRowFormatter.h"
 
 #ifdef OPENMP
 #include <omp.h>
@@ -18,6 +21,12 @@
 int createtsv(int argc, const char **argv, const Command &command) {
     Parameters &par = Parameters::getInstance();
     par.parseParameters(argc, argv, command, true, Parameters::PARSE_VARIADIC, 0);
+
+    const bool recordsHaveTarget = par.filenames.size() > 3;
+    if (par.aastore && (!recordsHaveTarget || par.db1 == par.db2) &&
+        AAStoreTargetReader::hasNativeRecordHeaders(par.db1)) {
+        return aastoreCreateTsv(par, recordsHaveTarget);
+    }
 
     bool queryNucs = Parameters::isEqualDbtype(FileUtil::parseDbType(par.db1.c_str()), Parameters::DBTYPE_NUCLEOTIDES);
     bool targetNucs = Parameters::isEqualDbtype(FileUtil::parseDbType(par.db2.c_str()), Parameters::DBTYPE_NUCLEOTIDES);
@@ -111,7 +120,8 @@ int createtsv(int argc, const char **argv, const Command &command) {
                 queryHeader = Util::parseFastaHeader(headerData);
             }
 
-            size_t entryIndex = 0;
+            TsvRowFormatter formatter(targetColumn, par.firstSeqRepr);
+            formatter.begin(std::move(queryHeader));
 
             char *data = reader->getData(i, thread_idx);
             while (*data != '\0') {
@@ -147,27 +157,11 @@ int createtsv(int argc, const char **argv, const Command &command) {
                     targetAccession = dbKey;
                 }
 
-                if (par.firstSeqRepr && !entryIndex) {
-                    queryHeader = targetAccession;
-                }
-
-                outputBuffer.append(queryHeader);
-                outputBuffer.append("\t");
-                outputBuffer.append(targetAccession);
-
-                size_t offset = 0;
-                if (targetColumn != 0) {
-                    outputBuffer.append("\t");
-                    offset = 0;
-                } else {
-                    offset = strlen(dbKey);
-                }
-
                 char *nextLine = Util::skipLine(data);
-                outputBuffer.append(data + offset, (nextLine - (data + offset)) - 1);
-                outputBuffer.append("\n");
+                formatter.append(outputBuffer, targetAccession,
+                                 std::string_view(data, nextLine - data - 1),
+                                 targetColumn == 0 ? strlen(dbKey) : 0);
                 data = nextLine;
-                entryIndex++;
             }
             writer.writeData(outputBuffer.c_str(), outputBuffer.length(), queryKey, thread_idx, par.dbOut);
             outputBuffer.clear();

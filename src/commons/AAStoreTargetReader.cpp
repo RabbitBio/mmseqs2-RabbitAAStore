@@ -5,16 +5,107 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
+#include <numeric>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_map>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
 
 constexpr uint64_t kMinimumPrefixBytes = UINT64_C(64) * 1024 * 1024;
+constexpr char kSubsetMagic[8] = {'M', 'M', 'A', 'S', 'I', 'D', 'S', '1'};
+constexpr const char* kFullAssociation = "MMSEQS_AASTORE_FULL_V1";
+constexpr const char* kSubsetAssociation = "MMSEQS_AASTORE_SUBSET_V1";
+
+std::string resolved_store_path(const std::string& store) {
+    return std::filesystem::canonical(store).string();
+}
+
+uint64_t metadata_mtime_ns(const std::string& store) {
+    struct stat metadata;
+    if (::stat((std::filesystem::path(store) / "meta.bin").c_str(), &metadata) != 0) {
+        throw std::runtime_error("cannot stat AAStore metadata: " + store);
+    }
+    return static_cast<uint64_t>(metadata.st_mtim.tv_sec) * UINT64_C(1000000000) +
+        static_cast<uint64_t>(metadata.st_mtim.tv_nsec);
+}
+
+void write_association(const std::string& database, const std::string& store,
+                       bool subset) {
+    namespace fs = std::filesystem;
+    const fs::path locator = database + ".aastore.path";
+    const std::string resolvedStore = resolved_store_path(store);
+    const fs::path localStore = database + ".aastore";
+    if (!subset && fs::exists(localStore) &&
+        fs::canonical(localStore).string() == resolvedStore) {
+        fs::remove(locator);
+        return;
+    }
+    const fs::path temporary = locator.string() + ".tmp." + std::to_string(::getpid());
+    try {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output << resolvedStore << '\n'
+               << (subset ? kSubsetAssociation : kFullAssociation) << '\n';
+        output.close();
+        if (!output) throw std::runtime_error("cannot write AAStore association: " + locator.string());
+        fs::rename(temporary, locator);
+    } catch (...) {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        throw;
+    }
+}
+
+std::string association_layout(const std::string& database) {
+    std::ifstream input(database + ".aastore.path", std::ios::binary);
+    if (!input) return kFullAssociation;
+    std::string path, layout;
+    std::getline(input, path);
+    std::getline(input, layout);
+    if (!layout.empty() && layout.back() == '\r') layout.pop_back();
+    if (!layout.empty() && layout != kFullAssociation && layout != kSubsetAssociation) {
+        throw std::runtime_error("unsupported AAStore database association layout");
+    }
+    return layout;
+}
+
+struct SubsetHeader {
+    uint64_t count = 0;
+    uint64_t storeCount = 0;
+    uint64_t totalResidues = 0;
+    uint64_t maxResidues = 0;
+    uint64_t metaBytes = 0;
+    uint64_t metaMtimeNs = 0;
+    uint64_t pathBytes = 0;
+};
+static_assert(sizeof(SubsetHeader) == 7 * sizeof(uint64_t), "AAStore subset header padding");
+
+SubsetHeader read_subset_header(std::ifstream& input, std::string& storePath) {
+    char magic[8] = {};
+    SubsetHeader header;
+    input.read(magic, sizeof(magic));
+    input.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (!input || std::memcmp(magic, kSubsetMagic, sizeof(magic)) != 0 ||
+        header.count > UINT_MAX ||
+        header.pathBytes == 0 || header.pathBytes > 16384) {
+        throw std::runtime_error("invalid AAStore subset membership header");
+    }
+    storePath.resize(static_cast<size_t>(header.pathBytes));
+    input.read(storePath.data(), static_cast<std::streamsize>(storePath.size()));
+    if (!input || storePath.find('\0') != std::string::npos) {
+        throw std::runtime_error("invalid AAStore subset store path");
+    }
+    return header;
+}
 
 uint64_t saturating_multiply(uint64_t left, uint64_t right) {
     if (left == 0 || right == 0) return 0;
@@ -137,18 +228,171 @@ uint64_t file_bytes(const std::filesystem::path& path) {
     return error ? 0 : static_cast<uint64_t>(bytes);
 }
 
+struct HeaderRecordsProof {
+    bool present = false;
+    bool denseIds = false;
+    bool insertHeaderSpace = false;
+    uint64_t records = 0;
+};
+
+HeaderRecordsProof header_records_proof(const std::string& database,
+                                       const std::string& store) {
+    HeaderRecordsProof proof;
+    if (store.empty()) return proof;
+    const std::filesystem::path path(store);
+    std::ifstream marker(path / "mmseqs_headers.lossless");
+    if (!marker) return proof;
+    std::string line;
+    if (!std::getline(marker, line) ||
+        (line != "MMSEQS_AASTORE_HEADERS_V1" && line != "MMSEQS_AASTORE_HEADERS_V2")) {
+        throw std::runtime_error("invalid AAStore native-header certificate");
+    }
+    const bool legacy = line == "MMSEQS_AASTORE_HEADERS_V1";
+    const std::string layout = association_layout(database);
+    if (std::filesystem::exists(database + ".aastore.ids") ||
+        layout == kSubsetAssociation || (!legacy && layout != kFullAssociation)) {
+        throw std::runtime_error("AAStore record export requires an explicit full database view");
+    }
+    std::unordered_map<std::string, std::string> fields;
+    while (std::getline(marker, line)) {
+        const size_t equal = line.find('=');
+        if (equal == std::string::npos ||
+            !fields.emplace(line.substr(0, equal), line.substr(equal + 1)).second) {
+            throw std::runtime_error("invalid AAStore native-header certificate field");
+        }
+    }
+    const auto number = [&](const char* key) {
+        const auto field = fields.find(key);
+        if (field == fields.end() || field->second.empty() ||
+            field->second.find_first_not_of("0123456789") != std::string::npos) {
+            throw std::runtime_error(std::string("missing native-header certificate field: ") + key);
+        }
+        return static_cast<uint64_t>(std::stoull(field->second));
+    };
+    const std::string& reconstruction = fields["reconstruct"];
+    if (fields["header_newline"] != "excluded" ||
+        (reconstruction != "name+description+newline" &&
+         reconstruction != "name+space+description+newline")) {
+        throw std::runtime_error("unsupported AAStore record-header reconstruction");
+    }
+    proof.insertHeaderSpace = reconstruction == "name+space+description+newline";
+    const uint64_t dense = number("dense_keys");
+    if (dense > 1) throw std::runtime_error("invalid native-header key layout");
+    if (legacy) {
+        // Verify the old source binding once before publishing an AAStore-only
+        // certificate; an old one-line subset must not become a full view.
+        struct stat indexStat;
+        if (::stat((database + ".index").c_str(), &indexStat) != 0 ||
+            !S_ISREG(indexStat.st_mode) ||
+            number("source_index_size") != static_cast<uint64_t>(indexStat.st_size) ||
+            number("source_index_inode") != static_cast<uint64_t>(indexStat.st_ino) ||
+            number("source_index_mtime_ns") !=
+                static_cast<uint64_t>(indexStat.st_mtim.tv_sec) * UINT64_C(1000000000) +
+                static_cast<uint64_t>(indexStat.st_mtim.tv_nsec)) {
+            throw std::runtime_error("legacy AAStore records need the original index for one-time certification upgrade");
+        }
+    }
+    if (number("packed_size") != file_bytes(path / "packed.bin") ||
+        number("sequence_meta_size") != file_bytes(path / "meta.bin")) {
+        throw std::runtime_error("AAStore record certificate no longer matches AAStore files");
+    }
+    std::ifstream metadata(path / "meta.bin", std::ios::binary);
+    char magic[8] = {};
+    uint64_t version = 0, records = 0;
+    metadata.read(magic, sizeof(magic));
+    metadata.read(reinterpret_cast<char*>(&version), sizeof(version));
+    metadata.read(reinterpret_cast<char*>(&records), sizeof(records));
+    if (!metadata || std::memcmp(magic, "AAPCMP3\0", 8) != 0 || version != 3 ||
+        records != number("records")) {
+        throw std::runtime_error("AAStore native-header certificate sequence count differs");
+    }
+    for (const auto pair : {std::pair<const char*, const char*>{"packed", "packed.bin"},
+             {"sequence_meta", "meta.bin"}, {"names_meta", "names.meta"},
+             {"descriptions_meta", "descriptions.meta"}, {"names", "names.bin"},
+             {"descriptions", "descriptions.bin"}}) {
+        struct stat file;
+        if (::stat((path / pair.second).c_str(), &file) != 0 || !S_ISREG(file.st_mode)) {
+            throw std::runtime_error("incomplete certified AAStore record files");
+        }
+        const std::string prefix = std::string(pair.first) + '_';
+        const uint64_t mtime = static_cast<uint64_t>(file.st_mtim.tv_sec) * UINT64_C(1000000000) + file.st_mtim.tv_nsec;
+        if (legacy) {
+            fields[prefix + "size"] = std::to_string(file.st_size);
+            fields[prefix + "inode"] = std::to_string(file.st_ino);
+            fields[prefix + "mtime_ns"] = std::to_string(mtime);
+        } else if (number((prefix + "size").c_str()) != static_cast<uint64_t>(file.st_size) ||
+                   number((prefix + "inode").c_str()) != static_cast<uint64_t>(file.st_ino) ||
+                   number((prefix + "mtime_ns").c_str()) != mtime) {
+            throw std::runtime_error("AAStore record certificate no longer matches AAStore files");
+        }
+    }
+    if (legacy && dense == 1) {
+        // Publish the full-view association first, so an interrupted upgrade
+        // cannot leave a V2 certificate with an ambiguous legacy association.
+        AAStoreTargetReader::associateDatabase(database, store);
+        fields.erase("source_index_size");
+        fields.erase("source_index_inode");
+        fields.erase("source_index_mtime_ns");
+        marker.close();
+        const auto certificate = path / "mmseqs_headers.lossless";
+        const auto temporary = certificate.string() + ".tmp." + std::to_string(::getpid());
+        try {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output << "MMSEQS_AASTORE_HEADERS_V2\n";
+            for (const auto& field : fields) output << field.first << '=' << field.second << '\n';
+            output.close();
+            if (!output) throw std::runtime_error("cannot upgrade AAStore record certificate");
+            std::filesystem::rename(temporary, certificate);
+        } catch (...) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            throw;
+        }
+        Debug(Debug::INFO) << "Upgraded AAStore record certificate to AAStore index binding: " << database << "\n";
+    }
+    proof.present = true;
+    proof.denseIds = dense == 1;
+    proof.records = records;
+    return proof;
+}
+
 aastore_memory::Budget automatic_storage_budget(
         const std::string& database, size_t computeThreads,
-        uint64_t stageMemoryReserve) {
+        uint64_t stageMemoryReserve, const std::string& recordStore = {},
+        bool denseRecordIds = false, uint64_t recordSafetyReserve = 0,
+        const std::string& scoringStore = {}) {
     const MemoryAvailability memory = memory_availability();
-    const uint64_t indexReserve = database.empty()
+    const uint64_t indexReserve = database.empty() || denseRecordIds || !scoringStore.empty()
         ? 0 : file_bytes(database + ".index");
     const uint64_t threadReserve = saturating_multiply(
         std::max<size_t>(1, computeThreads),
         AAStoreTargetReader::kThreadBatchBytes);
-    aastore_memory::Budget budget = aastore_memory::plan(
-        memory.limit, memory.available, indexReserve, threadReserve,
-        stageMemoryReserve);
+    aastore_memory::Budget budget;
+    if (!scoringStore.empty()) {
+        const std::filesystem::path path(scoringStore);
+        const uint64_t metadataBytes = aastore_memory::add_bytes(
+            file_bytes(path / "meta.bin"), aastore_memory::add_bytes(
+                file_bytes(path / "names.meta"), aastore_memory::add_bytes(
+                    file_bytes(path / "descriptions.meta"),
+                    file_bytes(database + ".aastore.ids"))));
+        budget = aastore_memory::plan(memory.limit, memory.available,
+            0, threadReserve, aastore_memory::add_bytes(stageMemoryReserve, metadataBytes));
+        budget.stageReserve = stageMemoryReserve;
+        budget.metadataReserve = metadataBytes;
+    } else if (recordStore.empty()) {
+        budget = aastore_memory::plan(memory.limit, memory.available,
+            indexReserve, threadReserve, stageMemoryReserve);
+    } else {
+        const std::filesystem::path path(recordStore);
+        const uint64_t textBytes = aastore_memory::add_bytes(
+            file_bytes(path / "names.bin"), file_bytes(path / "descriptions.bin"));
+        const uint64_t metadataBytes = aastore_memory::add_bytes(
+            file_bytes(path / "meta.bin"), aastore_memory::add_bytes(
+                file_bytes(path / "names.meta"), file_bytes(path / "descriptions.meta")));
+        budget = aastore_memory::plan_records(memory.limit, memory.available,
+            indexReserve, threadReserve, stageMemoryReserve, textBytes, metadataBytes,
+            recordSafetyReserve);
+    }
     budget.cgroupLimited = memory.cgroupLimited;
     return budget;
 }
@@ -163,6 +407,8 @@ const char* storage_mode_name(aastore::StorageMode mode) {
 }
 
 }  // namespace
+
+AAStoreTargetReader::AAStoreTargetReader() = default;
 
 bool AAStoreTargetReader::IdPositionMap::insert_if_absent(
         size_t key, size_t value) noexcept {
@@ -209,7 +455,8 @@ AAStoreTargetReader::~AAStoreTargetReader() {
 
 void AAStoreTargetReader::installStore(
         std::unique_ptr<aastore::Store> store) {
-    const uint64_t residentBytes = store ? store->resident_bytes() : 0;
+    const uint64_t residentBytes = store ? aastore_memory::add_bytes(
+        store->resident_bytes(), store->resident_text_bytes()) : 0;
     const size_t tracked = static_cast<size_t>(std::min<uint64_t>(
         residentBytes, std::numeric_limits<size_t>::max()));
     if (trackedResidentBytes_ != 0) decrementMemory(trackedResidentBytes_);
@@ -221,66 +468,80 @@ void AAStoreTargetReader::installStore(
 std::string AAStoreTargetReader::associatedStorePath(
         const std::string& database) {
     namespace fs = std::filesystem;
-    const fs::path localStore = database + ".aastore";
-    if (fs::is_regular_file(localStore / "packed.bin") &&
-        fs::is_regular_file(localStore / "meta.bin")) {
-        return localStore.string();
-    }
-
     const fs::path locator = database + ".aastore.path";
     std::ifstream input(locator, std::ios::binary);
-    if (!input) return std::string();
-
-    std::string path;
-    std::getline(input, path);
-    if (!path.empty() && path.back() == '\r') path.pop_back();
-    if (path.empty() ||
-        !fs::is_regular_file(fs::path(path) / "packed.bin") ||
-        !fs::is_regular_file(fs::path(path) / "meta.bin")) {
-        throw std::runtime_error(
-            "invalid AAStore database association: " + locator.string());
+    if (input) {
+        std::string path;
+        std::getline(input, path);
+        if (!path.empty() && path.back() == '\r') path.pop_back();
+        if (path.empty() ||
+            !fs::is_regular_file(fs::path(path) / "packed.bin") ||
+            !fs::is_regular_file(fs::path(path) / "meta.bin")) {
+            throw std::runtime_error("invalid AAStore database association: " + locator.string());
+        }
+        return path;
     }
-    return path;
+    const fs::path localStore = database + ".aastore";
+    if (fs::is_regular_file(localStore / "packed.bin") &&
+        fs::is_regular_file(localStore / "meta.bin")) return localStore.string();
+    return std::string();
 }
 
 void AAStoreTargetReader::associateDatabase(const std::string& database,
                                             const std::string& store) {
-    namespace fs = std::filesystem;
-    const fs::path localStore = database + ".aastore";
-    const fs::path resolvedStore =
-        fs::absolute(fs::path(store)).lexically_normal();
-    const fs::path resolvedLocal =
-        fs::absolute(localStore).lexically_normal();
-    const fs::path locator = database + ".aastore.path";
-    if (resolvedStore == resolvedLocal) {
-        std::error_code error;
-        fs::remove(locator, error);
-        return;
-    }
+    write_association(database, store, false);
+    // A fresh full database must never inherit an earlier subset's members.
+    std::filesystem::remove(database + ".aastore.ids");
+}
 
-    const fs::path temporary =
-        locator.string() + ".tmp." + std::to_string(::getpid());
-    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-    if (!output) {
-        throw std::runtime_error(
-            "cannot create AAStore association: " + locator.string());
+void AAStoreTargetReader::associateSubsetDatabase(
+        const std::string& database, const std::string& store,
+        std::vector<uint32_t> keys) {
+    namespace fs = std::filesystem;
+    std::sort(keys.begin(), keys.end());
+    aastore::StoreOptions options;
+    options.storage_mode = aastore::StorageMode::ByteRange;
+    const std::string path = resolved_store_path(store);
+    aastore::Store metadataStore(path, options);
+    SubsetHeader header;
+    header.count = keys.size();
+    header.storeCount = metadataStore.size();
+    header.metaBytes = file_bytes(fs::path(path) / "meta.bin");
+    header.metaMtimeNs = metadata_mtime_ns(path);
+    header.pathBytes = path.size();
+    for (const uint32_t key : keys) {
+        if (key >= metadataStore.size()) throw std::out_of_range("AAStore subset member exceeds physical ID range");
+        const uint64_t length = metadataStore.sequence_length(key);
+        header.totalResidues = aastore_memory::add_bytes(header.totalResidues, length);
+        header.maxResidues = std::max(header.maxResidues, length);
     }
-    output << resolvedStore.string() << '\n';
-    output.close();
-    if (!output) {
-        std::error_code error;
-        fs::remove(temporary, error);
-        throw std::runtime_error(
-            "failed to write AAStore association: " + locator.string());
+    const fs::path members = database + ".aastore.ids";
+    const fs::path temporary = members.string() + ".tmp." + std::to_string(::getpid());
+    try {
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        output.write(kSubsetMagic, sizeof(kSubsetMagic));
+        output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+        output.write(path.data(), static_cast<std::streamsize>(path.size()));
+        output.write(reinterpret_cast<const char*>(keys.data()),
+                     static_cast<std::streamsize>(keys.size() * sizeof(uint32_t)));
+        output.close();
+        if (!output) throw std::runtime_error("cannot write AAStore subset membership: " + members.string());
+        fs::rename(temporary, members);
+        write_association(database, store, true);
+    } catch (...) {
+        std::error_code ignored;
+        fs::remove(temporary, ignored);
+        throw;
     }
-    std::error_code error;
-    fs::rename(temporary, locator, error);
-    if (error) {
-        std::error_code cleanupError;
-        fs::remove(temporary, cleanupError);
-        throw fs::filesystem_error(
-            "cannot install AAStore association", locator, error);
-    }
+}
+
+void AAStoreTargetReader::resetIdMap() {
+    mmseqsToAAStoreId_.clear();
+    keyOrder_.clear();
+    hasIdMap_ = false;
+    viewStatisticsKnown_ = false;
+    viewTotalLength_ = 0;
+    viewMaxLength_ = 0;
 }
 
 void AAStoreTargetReader::open(
@@ -288,20 +549,121 @@ void AAStoreTargetReader::open(
         const aastore::StoreOptions& storeOptions,
         const aastore::ReadOptions& readOptions) {
     installStore(std::make_unique<aastore::Store>(path, storeOptions));
-    mmseqsToAAStoreId_.clear();
-    hasIdMap_ = false;
+    resetIdMap();
+    recordsEnabled_ = false;
+    recordsDenseIds_ = false;
+    recordHeaderNeedsSpace_ = false;
     readOptions_ = readOptions;
 }
 
 bool AAStoreTargetReader::openForDatabase(
         const std::string& database, size_t computeThreads,
+        uint64_t stageMemoryReserve, bool enabled, bool preferRecordFields,
+        uint64_t recordSafetyReserve) {
+    return enabled && openAssociated(database, computeThreads, stageMemoryReserve,
+                                     preferRecordFields, recordSafetyReserve, false);
+}
+
+bool AAStoreTargetReader::openForScoring(
+        const std::string& database, size_t computeThreads,
         uint64_t stageMemoryReserve, bool enabled) {
-    if (!enabled) return false;
+    return enabled && openAssociated(database, computeThreads, stageMemoryReserve,
+                                     false, 0, true);
+}
+
+bool AAStoreTargetReader::openAssociated(
+        const std::string& database, size_t computeThreads,
+        uint64_t stageMemoryReserve, bool preferRecordFields,
+        uint64_t recordSafetyReserve, bool scoring) {
     const std::string path = associatedStorePath(database);
     if (path.empty()) return false;
 
+    SubsetHeader subsetHeader;
+    std::vector<uint32_t> subsetKeys;
+    bool subsetView = false;
+    if (scoring) {
+        namespace fs = std::filesystem;
+        const fs::path members = database + ".aastore.ids";
+        const std::string layout = association_layout(database);
+        if (fs::exists(members)) {
+            std::ifstream input(members, std::ios::binary);
+            std::string boundStore;
+            subsetHeader = read_subset_header(input, boundStore);
+            const uint64_t expectedBytes = sizeof(kSubsetMagic) + sizeof(SubsetHeader) +
+                subsetHeader.pathBytes + subsetHeader.count * sizeof(uint32_t);
+            if (file_bytes(members) != expectedBytes ||
+                boundStore != resolved_store_path(path) ||
+                subsetHeader.metaBytes != file_bytes(fs::path(path) / "meta.bin") ||
+                subsetHeader.metaMtimeNs != metadata_mtime_ns(path)) {
+                throw std::runtime_error("AAStore subset membership differs from associated store: " + members.string());
+            }
+            subsetView = true;
+        } else if (layout == kSubsetAssociation) {
+            throw std::runtime_error("missing AAStore subset membership: " + members.string());
+        } else if (layout.empty()) {
+            // Compatibility for old one-line associations only. Convert keys
+            // once without constructing/parsing a native DBReader index.
+            std::ifstream index(database + ".index");
+            if (!index) throw std::runtime_error("legacy AAStore association needs its index for one-time membership conversion");
+            std::string line;
+            uint64_t count = 0;
+            bool dense = true;
+            while (std::getline(index, line)) {
+                std::istringstream fields(line);
+                uint64_t key = 0, offset = 0, length = 0;
+                std::string extra;
+                if (!(fields >> key >> offset >> length) || fields >> extra || key >= UINT_MAX) {
+                    throw std::runtime_error("invalid legacy AAStore sequence index entry");
+                }
+                if (dense && key != count) {
+                    dense = false;
+                    subsetKeys.resize(static_cast<size_t>(count));
+                    std::iota(subsetKeys.begin(), subsetKeys.end(), uint32_t{0});
+                }
+                if (!dense) subsetKeys.push_back(static_cast<uint32_t>(key));
+                if (++count > UINT_MAX) throw std::runtime_error("AAStore view exceeds MMseqs ID range");
+            }
+            if (!index.eof()) throw std::runtime_error("cannot read legacy AAStore sequence index");
+            aastore::StoreOptions metadataOptions;
+            metadataOptions.storage_mode = aastore::StorageMode::ByteRange;
+            aastore::Store metadataStore(path, metadataOptions);
+            if (dense && count == metadataStore.size()) associateDatabase(database, path);
+            else {
+                if (dense) {
+                    subsetKeys.resize(static_cast<size_t>(count));
+                    std::iota(subsetKeys.begin(), subsetKeys.end(), uint32_t{0});
+                }
+                associateSubsetDatabase(database, path, std::move(subsetKeys));
+            }
+            Debug(Debug::INFO) << "Upgraded legacy AAStore association to explicit membership: " << database << "\n";
+            return openAssociated(database, computeThreads, stageMemoryReserve,
+                                  preferRecordFields, recordSafetyReserve, scoring);
+        }
+    }
+
+    const HeaderRecordsProof proof = preferRecordFields
+        ? header_records_proof(database, path) : HeaderRecordsProof{};
     const aastore_memory::Budget automaticBudget = automatic_storage_budget(
-        database, computeThreads, stageMemoryReserve);
+        database, computeThreads, stageMemoryReserve,
+        proof.present ? path : std::string(), proof.denseIds, recordSafetyReserve,
+        scoring ? path : std::string());
+    if (subsetView) {
+        // Probe available memory before allocating members so their bytes are
+        // reserved once in the budget, rather than also reducing availability.
+        std::ifstream input(database + ".aastore.ids", std::ios::binary);
+        input.seekg(static_cast<std::streamoff>(sizeof(kSubsetMagic) +
+                    sizeof(SubsetHeader) + subsetHeader.pathBytes));
+        subsetKeys.resize(static_cast<size_t>(subsetHeader.count));
+        input.read(reinterpret_cast<char*>(subsetKeys.data()),
+                   static_cast<std::streamsize>(subsetKeys.size() * sizeof(uint32_t)));
+        if (!input) throw std::runtime_error("truncated AAStore subset membership: " + database + ".aastore.ids");
+        for (size_t id = 0; id < subsetKeys.size(); ++id) {
+            if (subsetKeys[id] >= subsetHeader.storeCount ||
+                (id != 0 && subsetKeys[id - 1] > subsetKeys[id])) {
+                throw std::runtime_error("invalid AAStore subset member order or ID");
+            }
+        }
+    }
     const uint64_t packedBytes = file_bytes(
         std::filesystem::path(path) / "packed.bin");
     const uint64_t selectedBytes =
@@ -320,12 +682,44 @@ bool AAStoreTargetReader::openForDatabase(
 
     options.threads = 8;
     options.cache_bytes = cacheBytes;
-    options.resident_names = false;
-    options.resident_descriptions = false;
+    options.resident_names = proof.present && automaticBudget.residentText;
+    options.resident_descriptions = options.resident_names;
+    if (proof.present) {
+        Debug(Debug::INFO) << "AAStore record allocation planned: resident_text_columns="
+            << (options.resident_names ? 1 : 0)
+            << " memory_text_reserve=" << automaticBudget.textReserve
+            << " memory_metadata_reserve=" << automaticBudget.metadataReserve
+            << " memory_safety_reserve=" << automaticBudget.safetyReserve
+            << " memory_available=" << automaticBudget.memoryAvailable
+            << " memory_packed_budget=" << automaticBudget.cacheBytes << "\n";
+        std::cout.flush();
+    }
     installStore(std::make_unique<aastore::Store>(
         std::filesystem::path(path), options));
-    mmseqsToAAStoreId_.clear();
-    hasIdMap_ = false;
+    resetIdMap();
+    if (scoring) {
+        if (store_->size() > UINT_MAX) throw std::runtime_error("AAStore database exceeds MMseqs key range");
+        if (subsetView) {
+            if (subsetHeader.storeCount != store_->size()) {
+                throw std::runtime_error("AAStore subset membership sequence count differs from store");
+            }
+            mmseqsToAAStoreId_ = std::move(subsetKeys);
+            hasIdMap_ = true;
+        }
+        updateViewStatistics();
+        if (subsetView && (viewTotalLength_ != subsetHeader.totalResidues ||
+                           viewMaxLength_ != subsetHeader.maxResidues)) {
+            throw std::runtime_error("AAStore subset membership statistics differ from metadata");
+        }
+    }
+    recordsEnabled_ = proof.present;
+    recordsDenseIds_ = proof.denseIds;
+    recordHeaderNeedsSpace_ = proof.insertHeaderSpace;
+    if (recordsEnabled_) {
+        if (store_->size() != proof.records || !store_->has_names() || !store_->has_descriptions()) {
+            throw std::runtime_error("certified AAStore record columns differ from sequence metadata");
+        }
+    }
 
     readOptions_ = aastore::ReadOptions{};
     readOptions_.threads = 1;
@@ -346,6 +740,13 @@ bool AAStoreTargetReader::openForDatabase(
         << " memory_buffer_reserve=" << automaticBudget.bufferReserve
         << " memory_safety_reserve=" << automaticBudget.safetyReserve
         << " memory_stage_reserve=" << automaticBudget.stageReserve
+        << " memory_metadata_reserve=" << automaticBudget.metadataReserve
+        << " memory_text_reserve=" << automaticBudget.textReserve
+        << " resident_text_columns=" << (options.resident_names ? 1 : 0)
+        << " resident_text_bytes=" << store_->resident_text_bytes()
+        << " records_dense_ids=" << (recordsDenseIds_ ? 1 : 0)
+        << " sequence_index=" << (scoring || recordsDenseIds_ ? "aastore" : "native_mapping")
+        << " subset_members=" << (scoring && hasIdMap_ ? size() : 0)
         << " memory_remaining_pool=" << automaticBudget.remainingPool
         << " memory_packed_budget=" << automaticBudget.cacheBytes
         << " memory_page_cache_reserve="
@@ -357,6 +758,63 @@ bool AAStoreTargetReader::openForDatabase(
         << static_cast<double>(store_->preload_ns()) / 1e9
         << "\n";
     return true;
+}
+
+bool AAStoreTargetReader::hasNativeRecordHeaders(const std::string& database) {
+    return header_records_proof(database, associatedStorePath(database)).present;
+}
+
+bool AAStoreTargetReader::recordsEnabled() const noexcept { return recordsEnabled_; }
+
+bool AAStoreTargetReader::recordsDenseIds() const noexcept { return recordsDenseIds_; }
+
+std::string_view AAStoreTargetReader::headerSeparator(std::string_view description) const noexcept {
+    return recordHeaderNeedsSpace_ && !description.empty() ? std::string_view(" ") : std::string_view();
+}
+
+uint64_t AAStoreTargetReader::recordLength(size_t mmseqsId) const {
+    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    const size_t id = store_id_for_mmseqs_id(mmseqsId);
+    return aastore_memory::add_bytes(store_->sequence_length(id),
+        aastore_memory::add_bytes(store_->name_length(id), store_->description_length(id)));
+}
+
+void AAStoreTargetReader::fetch_records(const std::vector<size_t>& ids,
+                                      RecordThreadBatch& batch,
+                                      size_t computeThreads, size_t readThreads) const {
+    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    batch.physicalIds.clear();
+    batch.physicalIds.reserve(ids.size());
+    batch.positions.prepare(ids.size());
+    for (const size_t id : ids) {
+        batch.positions.insert_if_absent(id, batch.physicalIds.size());
+        batch.physicalIds.push_back(store_id_for_mmseqs_id(id));
+    }
+    aastore::ReadOptions options = readOptions_;
+    options.threads = readThreads;
+    options.io_queue_depth = threadBatchQueueDepth(computeThreads);
+    // batch_get_records does not reuse its arenas. Release the previous batch
+    // first so a second 64 MiB batch cannot double the resident arena budget.
+    batch.records = aastore::RecordBatch{};
+    batch.records = store_->batch_get_records(batch.physicalIds, aastore::RecordFields::All, options);
+}
+
+void AAStoreTargetReader::fetch_headers(const std::vector<size_t>& ids,
+                                      RecordThreadBatch& batch, size_t readThreads) const {
+    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    batch.physicalIds.clear();
+    batch.physicalIds.reserve(ids.size());
+    batch.positions.prepare(ids.size());
+    for (const size_t id : ids) {
+        batch.positions.insert_if_absent(id, batch.physicalIds.size());
+        batch.physicalIds.push_back(store_id_for_mmseqs_id(id));
+    }
+    aastore::ReadOptions options = readOptions_;
+    options.threads = readThreads;
+    options.io_queue_depth = threadBatchQueueDepth(readThreads);
+    batch.records = aastore::RecordBatch{};
+    batch.records = store_->batch_get_records(batch.physicalIds,
+        aastore::RecordFields::Name | aastore::RecordFields::Description, options);
 }
 
 bool AAStoreTargetReader::enabled() const noexcept {
@@ -463,15 +921,50 @@ uint64_t AAStoreTargetReader::size() const {
 uint64_t AAStoreTargetReader::totalLength() const {
     if (!store_) return 0;
     if (!hasIdMap_) return store_->total_residues();
-    uint64_t total = 0;
-    for (const aastore::SequenceId id : mmseqsToAAStoreId_) {
-        total += store_->sequence_length(id);
-    }
-    return total;
+    updateViewStatistics();
+    return viewTotalLength_;
 }
 
 uint64_t AAStoreTargetReader::sequenceLength(size_t mmseqsId) const {
     return store_->sequence_length(store_id_for_mmseqs_id(mmseqsId));
+}
+
+void AAStoreTargetReader::updateViewStatistics() const {
+    if (viewStatisticsKnown_) return;
+    viewTotalLength_ = 0;
+    viewMaxLength_ = 0;
+    if (store_) {
+        for (size_t id = 0; id < size(); ++id) {
+            const uint64_t length = sequenceLength(id);
+            viewTotalLength_ = aastore_memory::add_bytes(viewTotalLength_, length);
+            viewMaxLength_ = std::max(viewMaxLength_, length);
+        }
+    }
+    viewStatisticsKnown_ = true;
+}
+
+uint64_t AAStoreTargetReader::maxSequenceLength() const {
+    updateViewStatistics();
+    return viewMaxLength_;
+}
+
+size_t AAStoreTargetReader::getId(unsigned int key) const {
+    if (!store_) return UINT_MAX;
+    if (!hasIdMap_) return key < store_->size() ? static_cast<size_t>(key) : UINT_MAX;
+    if (keyOrder_.empty()) {
+        const auto found = std::lower_bound(mmseqsToAAStoreId_.begin(), mmseqsToAAStoreId_.end(), key);
+        return found != mmseqsToAAStoreId_.end() && *found == key
+            ? static_cast<size_t>(found - mmseqsToAAStoreId_.begin()) : UINT_MAX;
+    }
+    const auto found = std::lower_bound(keyOrder_.begin(), keyOrder_.end(), key,
+        [&](uint32_t local, uint32_t sought) { return mmseqsToAAStoreId_[local] < sought; });
+    return found != keyOrder_.end() && mmseqsToAAStoreId_[*found] == key ? *found : UINT_MAX;
+}
+
+unsigned int AAStoreTargetReader::getDbKey(size_t mmseqsId) const {
+    const size_t physical = store_id_for_mmseqs_id(mmseqsId);
+    if (physical > UINT_MAX) throw std::out_of_range("AAStore key exceeds MMseqs key range");
+    return static_cast<unsigned int>(physical);
 }
 
 void AAStoreTargetReader::mapFromMMseqsKeys(
@@ -489,6 +982,14 @@ void AAStoreTargetReader::mapFromMMseqsKeys(
     if (identity) return;
     mmseqsToAAStoreId_.assign(keys.begin(), keys.end());
     hasIdMap_ = true;
+    viewStatisticsKnown_ = false;
+    if (!std::is_sorted(keys.begin(), keys.end())) {
+        if (keys.size() > UINT_MAX) throw std::out_of_range("AAStore view exceeds MMseqs ID range");
+        keyOrder_.resize(keys.size());
+        std::iota(keyOrder_.begin(), keyOrder_.end(), uint32_t{0});
+        std::stable_sort(keyOrder_.begin(), keyOrder_.end(),
+            [&](uint32_t left, uint32_t right) { return keys[left] < keys[right]; });
+    }
 }
 
 void AAStoreTargetReader::validateSize(size_t mmseqsSize) const {

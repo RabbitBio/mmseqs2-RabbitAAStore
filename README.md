@@ -14,11 +14,25 @@ cd ..
 ./build/src/mmseqs easy-linclust input.fasta clusters tmp --threads 64 --aastore
 ```
 
-`--aastore` automatically builds sequence storage in the final native ID order
-(including shuffle) and uses it during rescoring/alignment and sequence export.
-Native sequence files, clustering parameters, header reads and output formats
-are retained. `easy-cluster`,
-`createdb`, `linclust` and `cluster` also accept the option. See
+`createdb --aastore` builds sequences, names and descriptions in the final native
+ID order (including shuffle), without creating a separate native `_h` database.
+The native sequence file and clustering algorithms are retained. AAStore
+alignment and rescoring use AAStore metadata without loading the native sequence
+index; native k-mer matching and other database stages keep their usual indexes.
+`easy-linclust` and `easy-cluster` use the text columns for TSV and call
+`batch_get_records(All)` to write representative and complete FASTA files directly.
+New record stores certify their AAStore files, so these exports also work
+without native sequence payloads, sequence indexes or headers. Cluster/result
+indexes remain native. An existing V1 record certificate needs its original
+native sequence index once for automatic upgrade; later exports use AAStore
+file identities only.
+The direct command is `aastoreexportfasta`; `--representative-only 1` selects
+representatives for that export and does not change clustering. `createdb`,
+`linclust` and `cluster` also accept `--aastore`. For an existing native database,
+automatic preparation adds sequence storage only; build from FASTA with
+`createdb --aastore` to include the text columns required for direct FASTA export.
+Nonresident scoring retains complete-query candidate batches of approximately
+64 MiB. See
 [AAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
 The upstream prebuilt binaries listed below do not include this option.
 Without `--aastore`, sequence reads always use native MMseqs2, even when an

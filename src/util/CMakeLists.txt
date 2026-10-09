@@ -1,4 +1,5 @@
 set(util_source_files
+        util/AAStoreTsvAdapter.cpp
         util/alignall.cpp
         util/alignbykmer.cpp
         util/appenddbtoindex.cpp
@@ -18,6 +19,7 @@ set(util_source_files
         util/indexdb.cpp
         util/offsetalignment.cpp
         util/createseqfiledb.cpp
+        util/aastore_export_fasta.cpp
         util/createsubdb.cpp
         util/view.cpp
         util/createtsv.cpp

@@ -11,7 +11,7 @@ add_executable(aastore_options_test tests/options_test.cpp)
 target_link_libraries(aastore_options_test PRIVATE aastore)
 add_test(NAME aastore_options_test COMMAND aastore_options_test)
 set_tests_properties(aastore_options_test PROPERTIES LABELS "options")
-set(_aastore_runtime_tests aastore_options_test aastore_codec_test)
+set(_aastore_runtime_tests aastore_options_test aastore_codec_test aastore_codec_kernels_test)
 foreach(_aastore_group IN ITEMS builder random sequential text concurrency)
     add_test(NAME aastore_store_${_aastore_group}
         COMMAND aastore_test --group ${_aastore_group})
@@ -23,6 +23,15 @@ unset(_aastore_group)
 add_executable(aastore_codec_test tests/codec_test.cpp)
 target_link_libraries(aastore_codec_test PRIVATE aastore)
 add_test(NAME aastore_codec_test COMMAND aastore_codec_test)
+# Include the private kernels in one independent test TU. Do not link aastore:
+# the test already contains codec.cpp's public definitions, including with IPO.
+add_executable(aastore_codec_kernels_test tests/codec_kernels_test.cpp)
+target_compile_features(aastore_codec_kernels_test PRIVATE cxx_std_17)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(aastore_codec_kernels_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME aastore_codec_kernels_test COMMAND aastore_codec_kernels_test)
+set_tests_properties(aastore_codec_kernels_test PROPERTIES LABELS "codec")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Compile the real backend against a private delayed-I/O shim, so old
     # kernel paths are tested even when the host disables io_uring.

@@ -213,6 +213,10 @@ public:
     bool has_descriptions() const noexcept;
     // 校验 ID 后返回该序列的残基长度。
     uint64_t sequence_length(SequenceId id) const;
+    // 返回名称的字节数；缺少名称列或 ID 越界时抛出异常，不读取文本正文。
+    uint64_t name_length(SequenceId id) const;
+    // 返回描述的字节数；缺少描述列或 ID 越界时抛出异常，不读取文本正文。
+    uint64_t description_length(SequenceId id) const;
     // 返回当前运行时选择的解码内核名称。
     const char* decode_kernel_name() const noexcept;
     // 读取单条序列，返回含一个元素的批次；读取选项与多条读取一致。

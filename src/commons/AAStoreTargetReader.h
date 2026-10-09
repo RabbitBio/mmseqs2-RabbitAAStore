@@ -74,7 +74,13 @@ public:
         size_t end = 0;
     };
 
-    AAStoreTargetReader() = default;
+    struct RecordThreadBatch {
+        aastore::RecordBatch records;
+        std::vector<aastore::SequenceId> physicalIds;
+        IdPositionMap positions;
+    };
+
+    AAStoreTargetReader();
     ~AAStoreTargetReader();
 
     void open(const std::string& path,
@@ -84,15 +90,42 @@ public:
     bool openForDatabase(const std::string& database,
                          size_t computeThreads = 1,
                          uint64_t stageMemoryReserve = 0,
-                         bool enabled = false);
+                         bool enabled = false,
+                         bool preferRecordFields = false,
+                         uint64_t recordSafetyReserve = 0);
+    // Scoring uses AAStore metadata and a compact subset membership file;
+    // it does not load a native sequence DBReader/index.
+    bool openForScoring(const std::string& database,
+                        size_t computeThreads = 1,
+                        uint64_t stageMemoryReserve = 0,
+                        bool enabled = false);
+
+    // Certified record columns retain either raw native-header separators or
+    // the default AAStore name/description fields.
+    static bool hasNativeRecordHeaders(const std::string& database);
+    bool recordsEnabled() const noexcept;
+    bool recordsDenseIds() const noexcept;
+    std::string_view headerSeparator(std::string_view description) const noexcept;
+    uint64_t recordLength(size_t mmseqsId) const;
+    void fetch_records(const std::vector<size_t>& ids,
+                       RecordThreadBatch& batch, size_t computeThreads,
+                       size_t readThreads = 1) const;
+    void fetch_headers(const std::vector<size_t>& ids,
+                       RecordThreadBatch& batch, size_t readThreads = 1) const;
 
     static std::string associatedStorePath(const std::string& database);
     static void associateDatabase(const std::string& database,
                                   const std::string& store);
+    static void associateSubsetDatabase(const std::string& database,
+                                        const std::string& store,
+                                        std::vector<uint32_t> keys);
 
     bool enabled() const noexcept;
     bool fullMemory() const noexcept;
     static constexpr size_t kThreadBatchBytes = 64 * 1024 * 1024;
+    // Record offsets, ID vectors and temporary read requests also consume
+    // space; accounting per member keeps even empty records bounded.
+    static constexpr size_t kRecordBatchOverheadBytes = 256;
     static constexpr size_t kThreadBatchIoBudget = 512;
     static size_t threadBatchQueueDepth(size_t computeThreads);
     void fetch_into(ThreadBatch& batch, size_t computeThreads) const;
@@ -104,6 +137,9 @@ public:
     uint64_t size() const;
     uint64_t totalLength() const;
     uint64_t sequenceLength(size_t mmseqsId) const;
+    uint64_t maxSequenceLength() const;
+    size_t getId(unsigned int key) const;
+    unsigned int getDbKey(size_t mmseqsId) const;
     void mapFromMMseqsKeys(const std::vector<uint32_t>& keys);
     void validateSize(size_t mmseqsSize) const;
 
@@ -114,12 +150,26 @@ private:
     void prepare_into(ThreadBatch& batch) const;
     void installStore(std::unique_ptr<aastore::Store> store);
     size_t store_id_for_mmseqs_id(size_t mmseqsId) const;
+    bool openAssociated(const std::string& database, size_t computeThreads,
+                        uint64_t stageMemoryReserve, bool preferRecordFields,
+                        uint64_t recordSafetyReserve, bool scoring);
+    void updateViewStatistics() const;
+    void resetIdMap();
 
     std::unique_ptr<aastore::Store> store_;
-    std::vector<aastore::SequenceId> mmseqsToAAStoreId_;
+    std::vector<uint32_t> mmseqsToAAStoreId_;
+    // Only the legacy explicit map API can request a non-key-sorted view.
+    // New subset files are key-sorted and need no inverse table.
+    std::vector<uint32_t> keyOrder_;
     bool hasIdMap_ = false;
+    mutable bool viewStatisticsKnown_ = false;
+    mutable uint64_t viewTotalLength_ = 0;
+    mutable uint64_t viewMaxLength_ = 0;
     aastore::ReadOptions readOptions_;
     size_t trackedResidentBytes_ = 0;
+    bool recordsEnabled_ = false;
+    bool recordsDenseIds_ = false;
+    bool recordHeaderNeedsSpace_ = false;
 };
 
 #endif

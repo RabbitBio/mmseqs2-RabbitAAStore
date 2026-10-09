@@ -1,4 +1,5 @@
 #include "Alignment.h"
+#include "AAStoreSequenceAccess.h"
 #include "Util.h"
 #include "Debug.h"
 #include "Matcher.h"
@@ -20,7 +21,6 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
-#include <mutex>
 
 Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeqDB,
                      const std::string &prefDB, const std::string &prefDBIndex,
@@ -76,21 +76,18 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
         addCandidateFile(path);
     }
     addCandidateFile(prefDBIndex);
-    useAAStoreTarget = aastoreTarget.openForDatabase(
+    useAAStoreTarget = aastoreTarget.openForScoring(
         targetSeqDB, par.threads, candidateWorkingSet, par.aastore);
     aaStoreDirect = useAAStoreTarget && aastoreTarget.fullMemory();
-    const unsigned int targetPreloadMode = useAAStoreTarget
-        ? (touch ? IndexReader::PRELOAD_INDEX : IndexReader::PRELOAD_NO)
-        : (touch ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA)
-                 : IndexReader::PRELOAD_NO);
-    const int targetDataMode = useAAStoreTarget
-        ? DBReader<unsigned int>::USE_INDEX
-        : (DBReader<unsigned int>::USE_INDEX | DBReader<unsigned int>::USE_DATA);
-    tDbrIdx = new IndexReader(targetSeqDB, par.threads,
-                              extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
-                              targetPreloadMode, targetDataMode);
-    tdbr = tDbrIdx->sequenceReader;
-    targetSeqType = tdbr->getDbtype();
+    if (useAAStoreTarget) {
+        targetSeqType = FileUtil::parseDbType(targetSeqDB.c_str());
+    } else {
+        tDbrIdx = new IndexReader(targetSeqDB, par.threads,
+                                  extended & Parameters::DBTYPE_EXTENDED_INDEX_NEED_SRC ? IndexReader::SRC_SEQUENCES : IndexReader::SEQUENCES,
+                                  (touch) ? (IndexReader::PRELOAD_INDEX | IndexReader::PRELOAD_DATA) : IndexReader::PRELOAD_NO);
+        tdbr = tDbrIdx->sequenceReader;
+        targetSeqType = tdbr->getDbtype();
+    }
     sameQTDB = (targetSeqDB.compare(querySeqDB) == 0);
     if (sameQTDB == true) {
         qDbrIdx = tDbrIdx;
@@ -149,12 +146,16 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     //qdbr->readMmapedDataInMemory();
     // make sure to touch target after query, so if there is not enough memory for the query, at least the targets
     // might have had enough space left to be residung in the page cache
-    if (sameQTDB == false && tDbrIdx == NULL && par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
+    if (sameQTDB == false && tDbrIdx == NULL && tdbr != NULL && par.preloadMode != Parameters::PRELOAD_MODE_MMAP) {
         tdbr->readMmapedDataInMemory();
     }
 
-    if (qdbr->getSize() <= threads) {
-        threads = qdbr->getSize();
+    const size_t querySize = useAAStoreTarget && sameQTDB
+        ? aastoreTarget.size() : qdbr->getSize();
+    const size_t targetSize = useAAStoreTarget
+        ? aastoreTarget.size() : tdbr->getSize();
+    if (querySize <= threads) {
+        threads = querySize;
     }
 
     if (querySeqType == -1 || targetSeqType == -1) {
@@ -162,26 +163,13 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
         EXIT(EXIT_FAILURE);
     }
 
-    Debug(Debug::INFO) << "Query database size: "  << qdbr->getSize() << " type: " << Parameters::getDbTypeName(querySeqType) << "\n";
-    Debug(Debug::INFO) << "Target database size: " << tdbr->getSize() << " type: " << Parameters::getDbTypeName(targetSeqType) << "\n";
+    Debug(Debug::INFO) << "Query database size: "  << querySize << " type: " << Parameters::getDbTypeName(querySeqType) << "\n";
+    Debug(Debug::INFO) << "Target database size: " << targetSize << " type: " << Parameters::getDbTypeName(targetSeqType) << "\n";
     if (useAAStoreTarget) {
         if (!Parameters::isEqualDbtype(targetSeqType, Parameters::DBTYPE_AMINO_ACIDS)) {
             throw std::runtime_error("AAStore alignment targets must be amino-acid sequences");
         }
-        bool needsKeyMap = tdbr->getSize() != aastoreTarget.size();
-        for (size_t id = 0; !needsKeyMap && id < tdbr->getSize(); ++id) {
-            needsKeyMap = tdbr->getDbKey(id) != id;
-        }
-        if (needsKeyMap) {
-            std::vector<uint32_t> targetKeys(tdbr->getSize());
-            for (size_t id = 0; id < targetKeys.size(); ++id) {
-                targetKeys[id] = tdbr->getDbKey(id);
-            }
-            aastoreTarget.mapFromMMseqsKeys(targetKeys);
-        }
     }
-    aastoreTarget.validateSize(tdbr->getSize());
-
     prefdbr = new DBReader<unsigned int>(prefDB.c_str(), prefDBIndex.c_str(), threads, DBReader<unsigned int>::USE_DATA|DBReader<unsigned int>::USE_INDEX);
     prefdbr->open(DBReader<unsigned int>::LINEAR_ACCCESS);
     reversePrefilterResult = Parameters::isEqualDbtype(prefdbr->getDbtype(), Parameters::DBTYPE_PREFILTER_REV_RES);
@@ -236,49 +224,6 @@ unsigned int Alignment::initSWMode(unsigned int alignmentMode, float covThr, flo
     return swMode;
 }
 
-bool Alignment::mapTargetSequence(
-        Sequence& sequence, size_t dbId, unsigned int dbKey,
-        unsigned int threadIdx, std::string& scratch,
-        const AAStoreTargetReader::Batch* batch) {
-    size_t length = 0;
-    char* data = getTargetSequenceData(dbId, threadIdx, length, scratch, batch);
-    if (data == NULL) return false;
-    sequence.mapSequence(dbId, dbKey, data, length);
-    return true;
-}
-
-char* Alignment::getTargetSequenceData(
-        size_t dbId, unsigned int threadIdx, size_t& seqLen,
-        std::string& scratch,
-        const AAStoreTargetReader::Batch* batch) {
-    if (dbId >= tdbr->getSize()) return NULL;
-    if (!useAAStoreTarget) {
-        seqLen = tdbr->getSeqLen(dbId);
-        return tdbr->getData(dbId, threadIdx);
-    }
-    if (aaStoreDirect) {
-        try {
-            if (aastoreTarget.sequenceLength(dbId) >
-                static_cast<uint64_t>(std::numeric_limits<int>::max())) {
-                throw std::length_error("AAStore sequence exceeds alignment length range");
-            }
-            aastoreTarget.get(dbId, scratch);
-        } catch (const std::exception& error) {
-            Debug(Debug::ERROR) << error.what() << "\n";
-            EXIT(EXIT_FAILURE);
-        }
-        seqLen = scratch.size();
-        return scratch.data();
-    }
-    std::string_view sequence;
-    if (batch == NULL || !batch->view(dbId, sequence)) {
-        Debug(Debug::ERROR) << "Target sequence is missing from AAStore batch\n";
-        EXIT(EXIT_FAILURE);
-    }
-    seqLen = sequence.size();
-    return const_cast<char*>(sequence.data());
-}
-
 Alignment::~Alignment() {
     if (realign_m != NULL) {
         delete realign_m;
@@ -287,7 +232,7 @@ Alignment::~Alignment() {
 
     if (tDbrIdx != NULL) {
         delete tDbrIdx;
-    }else{
+    }else if (tdbr != NULL){
         tdbr->close();
         delete tdbr;
     }
@@ -295,7 +240,7 @@ Alignment::~Alignment() {
     if (sameQTDB == false) {
         if(qDbrIdx != NULL){
             delete qDbrIdx;
-        }else{
+        }else if (qdbr != NULL){
             qdbr->close();
             delete qdbr;
         }
@@ -353,81 +298,37 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
         ? static_cast<size_t>(aastoreTarget.totalLength())
         : tdbr->getAminoAcidDBSize();
     EvalueComputation evaluer(targetResidues, this->m, gapOpen, gapExtend);
+    // Native getMaxSeqLen includes the record's newline and null terminator.
+    const size_t targetMaxSeqLen = useAAStoreTarget
+        ? aastoreTarget.maxSequenceLength() + 2 : tdbr->getMaxSeqLen();
+    const size_t queryMaxSeqLen = useAAStoreTarget && sameQTDB
+        ? targetMaxSeqLen : qdbr->getMaxSeqLen();
 
     size_t totalMemory = Util::getTotalSystemMemory();
-    const bool useAAStoreThreadBatch = useAAStoreTarget && !aaStoreDirect;
-    constexpr size_t queryScheduleChunk = 5;
-    const size_t threadBytes = useAAStoreThreadBatch
-        ? AAStoreTargetReader::kThreadBatchBytes : 0;
-    const size_t threadQueueDepth = useAAStoreThreadBatch
-        ? AAStoreTargetReader::threadBatchQueueDepth(threads) : 0;
     size_t flushSize = 1000000;
     if (totalMemory > prefdbr->getTotalDataSize()) {
         flushSize = dbSize;
     }
-
     size_t alignmentsNum = 0;
     size_t totalPassedNum = 0;
-
-    if (aaStoreDirect) {
-        Debug(Debug::INFO) << "AAStore alignment: full-memory thread-local get, threads="
-                           << threads << " query=" << (sameQTDB ? "aastore" : "native")
-                           << " target=aastore decode=ascii\n";
-    } else if (useAAStoreThreadBatch) {
-        Debug(Debug::INFO) << "AAStore alignment: dynamic thread-local get_into, "
-                           << "candidate_bytes_per_batch=" << threadBytes
-                           << " aastore_threads=1 compute_threads=" << threads
-                           << " io_queue_budget=" << AAStoreTargetReader::kThreadBatchIoBudget
-                           << " io_queue_depth_per_thread=" << threadQueueDepth
-                           << " query=" << (sameQTDB ? "aastore" : "native")
-                           << " target=aastore\n";
+    std::vector<AAStoreSequenceAccess::Stats> sequenceStats(threads);
+    if (useAAStoreTarget) {
+        Debug(Debug::INFO) << "AAStore alignment: "
+            << (aaStoreDirect ? "full-memory thread-local get" : "candidate-byte batches")
+            << " candidate_bytes_per_batch=" << AAStoreTargetReader::kThreadBatchBytes
+            << " threads=" << threads << " query=" << (sameQTDB ? "aastore" : "native")
+            << " target=aastore decode=ascii\n";
     }
     size_t processed = 0;
-    size_t threadBatchCount = 0;
-    std::vector<aastore::BatchStats> threadIoStats(useAAStoreThreadBatch ? threads : 0);
     while (processed < dbSize) {
         const size_t start = dbFrom + processed;
         const size_t bucketSize = std::min(dbSize - processed, flushSize);
         const bool hasMore = processed + bucketSize < dbSize;
         Debug::Progress progress(bucketSize);
-        // Let idle workers claim complete queries by candidate bytes. A fixed
-        // query chunk can strand most threads behind one unusually heavy chunk.
-        size_t nextThreadBatchQuery = start;
-        std::mutex threadBatchCursorMutex;
+        AAStoreQueryBatches batches(aastoreTarget, *prefdbr,
+                                   sameQTDB, start, start + bucketSize);
 
-        auto collectThreadBatch = [&](AAStoreTargetReader::ThreadBatch& batch,
-                                      size_t begin,
-                                      size_t limit,
-                                      unsigned readerThread) {
-            batch.ids.clear();
-            batch.begin = begin;
-            batch.end = begin;
-            size_t bytes = 0;
-            char keyBuffer[1024];
-            for (size_t query = begin; query < limit; ++query) {
-                char* candidates = prefdbr->getData(query, readerThread);
-                if (sameQTDB && *candidates != '\0') {
-                    batch.ids.push_back(
-                        qdbr->getId(prefdbr->getDbKey(query)));
-                }
-                while (*candidates != '\0') {
-                    Util::parseKey(candidates, keyBuffer);
-                    const size_t targetId = tdbr->getId(
-                        Util::fast_atoi<unsigned int>(keyBuffer));
-                    batch.ids.push_back(targetId);
-                    const uint64_t length =
-                        aastoreTarget.sequenceLength(targetId);
-                    bytes += static_cast<size_t>(std::min<uint64_t>(
-                        length + 1,
-                        std::numeric_limits<size_t>::max() - bytes));
-                    candidates = Util::skipLine(candidates);
-                }
-                batch.end = query + 1;
-                if (bytes >= threadBytes) break;
-            }
-        };
-
-#pragma omp parallel num_threads(threads) reduction(+: threadBatchCount, alignmentsNum, totalPassedNum)
+#pragma omp parallel num_threads(threads) reduction(+: alignmentsNum, totalPassedNum)
         {
             unsigned int thread_idx = 0;
 #ifdef OPENMP
@@ -439,7 +340,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
             Sequence qSeq(maxSeqLen, querySeqType, m, 0, false, compBiasCorrection);
             Sequence dbSeq(maxSeqLen, targetSeqType, m, 0, false, compBiasCorrection);
             const size_t maxMatcherSeqLen = Parameters::isEqualDbtype(querySeqType, Parameters::DBTYPE_NUCLEOTIDES)
-                                            ? maxSeqLen : std::max(tdbr->getMaxSeqLen(), qdbr->getMaxSeqLen());
+                                            ? maxSeqLen : std::max(targetMaxSeqLen, queryMaxSeqLen);
 
             std::vector<Matcher::result_t> swResults;
             swResults.reserve(300);
@@ -457,16 +358,9 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
 
             std::string queryToWrap;
             queryToWrap.reserve(maxSeqLen * 2);
-            std::string queryBuffer;
-            std::string targetBuffer;
-            if (aaStoreDirect) {
-                queryBuffer.reserve(32768);
-                targetBuffer.reserve(32768);
-            }
 
             const char* words[10];
-            AAStoreTargetReader::ThreadBatch threadBatch;
-            const AAStoreTargetReader::Batch* workerBatch = NULL;
+            AAStoreSequenceAccess sequences(aastoreTarget, tdbr, thread_idx, threads, true);
 
             auto alignQuery = [&](size_t id) {
                 progress.updateProgress();
@@ -478,12 +372,12 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                 size_t origQueryLen = 0;
                 // only load query data if data != \0
                 if (*data != '\0') {
-                    size_t qId = qdbr->getId(queryDbKey);
+                    size_t qId = useAAStoreTarget && sameQTDB
+                        ? sequences.getId(queryDbKey) : qdbr->getId(queryDbKey);
                     size_t queryLen = 0;
                     char *querySeqData = NULL;
                     if (useAAStoreTarget && sameQTDB) {
-                        querySeqData = getTargetSequenceData(
-                            qId, thread_idx, queryLen, queryBuffer, workerBatch);
+                        querySeqData = sequences.query(qId, queryLen);
                     } else if (qId != UINT_MAX) {
                         querySeqData = qdbr->getData(qId, thread_idx);
                         queryLen = qdbr->getSeqLen(qId);
@@ -523,9 +417,8 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                     }
                     data = Util::skipLine(data);
 
-                    size_t dbId = tdbr->getId(dbKey);
-                    if (!mapTargetSequence(dbSeq, dbId, dbKey, thread_idx,
-                                           targetBuffer, workerBatch)) {
+                    size_t dbId = sequences.getId(dbKey);
+                    if (!sequences.mapTarget(dbSeq, dbId, dbKey)) {
                         Debug(Debug::ERROR) << "Sequence " << dbKey << " is required in the prefiltering, but is not contained in the target sequence database!\nPlease check your database.\n";
                         EXIT(EXIT_FAILURE);
                     }
@@ -561,8 +454,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                 }
 
                 if (altAlignment > 0 && realign == false && wrappedScoring == false) {
-                    computeAlternativeAlignment(queryDbKey, dbSeq, swResults, matcher, covThr, evalThr, swMode, thread_idx,
-                                                targetBuffer, workerBatch);
+                    computeAlternativeAlignment(queryDbKey, dbSeq, swResults, matcher, covThr, evalThr, swMode, sequences);
                 }
 
                 if (swResults.size() > 1) {
@@ -574,9 +466,8 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                     realigner->initQuery(&qSeq);
                     int realignAccepted = 0;
                     for (size_t result = 0; result < swResults.size() && realignAccepted < realignMaxSeqs; result++) {
-                        size_t dbId = tdbr->getId(swResults[result].dbKey);
-                        if (!mapTargetSequence(dbSeq, dbId, swResults[result].dbKey,
-                                               thread_idx, targetBuffer, workerBatch)) {
+                        size_t dbId = sequences.getId(swResults[result].dbKey);
+                        if (!sequences.mapTarget(dbSeq, dbId, swResults[result].dbKey)) {
                             Debug(Debug::ERROR) << "Sequence " << swResults[result].dbKey <<" is required in the prefiltering, but is not contained in the target sequence database!\nPlease check your database.\n";
                             EXIT(EXIT_FAILURE);
                         }
@@ -595,8 +486,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                     }
 
                     if (altAlignment > 0) {
-                        computeAlternativeAlignment(queryDbKey, dbSeq, swRealignResults, *realigner, realignCov, FLT_MAX, realignSwMode, thread_idx,
-                                                    targetBuffer, workerBatch);
+                        computeAlternativeAlignment(queryDbKey, dbSeq, swRealignResults, *realigner, realignCov, FLT_MAX, realignSwMode, sequences);
                     }
 
                     if (swRealignResults.size() > 1) {
@@ -609,10 +499,9 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                 if (lcaAlign == true && swRealignResults.size() > 0) {
                     Matcher::result_t& topHit = swRealignResults[0];
                     const unsigned int topHitKey = topHit.dbKey;
-                    size_t dbId = tdbr->getId(topHitKey);
+                    size_t dbId = sequences.getId(topHitKey);
                     size_t qSeqLen = 0;
-                    char *qSeqData = getTargetSequenceData(
-                        dbId, thread_idx, qSeqLen, queryBuffer, workerBatch);
+                    char *qSeqData = sequences.query(dbId, qSeqLen);
                     if (qSeqData == NULL) {
                         Debug(Debug::ERROR) << "Sequence " << topHitKey << " is required in the prefiltering, but is not contained in the target sequence database!\nPlease check your database.\n";
                         EXIT(EXIT_FAILURE);
@@ -639,9 +528,8 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
 //                        }
                         data = Util::skipLine(data);
 
-                        dbId = tdbr->getId(dbKey);
-                        if (!mapTargetSequence(dbSeq, dbId, dbKey, thread_idx,
-                                               targetBuffer, workerBatch)) {
+                        dbId = sequences.getId(dbKey);
+                        if (!sequences.mapTarget(dbSeq, dbId, dbKey)) {
                             Debug(Debug::ERROR) << "Sequence " << dbKey << " is required in the prefiltering, but is not contained in the target sequence database!\nPlease check your database.\n";
                             EXIT(EXIT_FAILURE);
                         }
@@ -678,42 +566,19 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
                 swResults.clear();
                 swRealignResults.clear();
             };
-
-            if (useAAStoreThreadBatch) {
-                while (true) {
-                    try {
-                        {
-                            std::lock_guard<std::mutex> lock(
-                                threadBatchCursorMutex);
-                            if (nextThreadBatchQuery >= start + bucketSize) {
-                                break;
-                            }
-                            collectThreadBatch(
-                                threadBatch, nextThreadBatchQuery,
-                                start + bucketSize, thread_idx);
-                            nextThreadBatchQuery = threadBatch.end;
-                        }
-                        aastoreTarget.fetch_into(threadBatch, threads);
-                        ++threadBatchCount;
-                        AAStoreTargetReader::accumulateIoStats(
-                            threadIoStats[thread_idx],
-                            threadBatch.sequences.fetched.stats);
-                        workerBatch = &threadBatch.sequences;
-                        for (size_t id = threadBatch.begin;
-                             id < threadBatch.end; ++id) {
-                            alignQuery(id);
-                        }
-                    } catch (const std::exception& error) {
-                        Debug(Debug::ERROR) << error.what() << "\n";
-                        EXIT(EXIT_FAILURE);
+            if (sequences.batched()) {
+                while (batches.next(sequences)) {
+                    for (size_t id = sequences.batchBegin(); id < sequences.batchEnd(); ++id) {
+                        alignQuery(id);
                     }
                 }
             } else {
-#pragma omp for schedule(dynamic, queryScheduleChunk)
+#pragma omp for schedule(dynamic, 5)
                 for (size_t id = start; id < (start + bucketSize); ++id) {
                     alignQuery(id);
                 }
             }
+            AAStoreSequenceAccess::accumulateStats(sequenceStats[thread_idx], sequences.stats());
             if (realigner != NULL && realigner != &matcher) {
                 delete realigner;
             }
@@ -728,11 +593,10 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
         processed += bucketSize;
     }
     dbw.close(merge);
-
-    if (useAAStoreThreadBatch) {
-        Debug(Debug::INFO) << "AAStore alignment thread batches=" << threadBatchCount << "\n";
-        AAStoreTargetReader::logIoStats(threadIoStats);
+    if (useAAStoreTarget && !aaStoreDirect) {
+        AAStoreSequenceAccess::logStats("alignment", sequenceStats);
     }
+
     Debug(Debug::INFO) << alignmentsNum << " alignments calculated\n";
     Debug(Debug::INFO) << totalPassedNum << " sequence pairs passed the thresholds";
     if (alignmentsNum > 0) {
@@ -773,8 +637,7 @@ bool Alignment::checkCriteria(Matcher::result_t &res, bool isIdentity, double ev
 }
 
 void Alignment::computeAlternativeAlignment(unsigned int queryDbKey, Sequence &dbSeq, std::vector<Matcher::result_t> &swResults,
-                                            Matcher &matcher, float covThr, float evalThr, int swMode, int thread_idx,
-                                            std::string& scratch, const AAStoreTargetReader::Batch* batch) {
+                                            Matcher &matcher, float covThr, float evalThr, int swMode, AAStoreSequenceAccess& sequences) {
     const unsigned char xIndex = m->aa2num[static_cast<int>('X')];
     const size_t firstItResSize = swResults.size();
     for (size_t i = 0; i < firstItResSize; i++) {
@@ -782,9 +645,8 @@ void Alignment::computeAlternativeAlignment(unsigned int queryDbKey, Sequence &d
         if (isIdentity == true) {
             continue;
         }
-        size_t dbId = tdbr->getId(swResults[i].dbKey);
-        if (!mapTargetSequence(dbSeq, dbId, swResults[i].dbKey, thread_idx,
-                               scratch, batch)) {
+        size_t dbId = sequences.getId(swResults[i].dbKey);
+        if (!sequences.mapTarget(dbSeq, dbId, swResults[i].dbKey)) {
             Debug(Debug::ERROR) << "Sequence " << swResults[i].dbKey << " is required in the prefiltering, but is not contained in the target sequence database!\nPlease check your database.\n";
             EXIT(EXIT_FAILURE);
         }

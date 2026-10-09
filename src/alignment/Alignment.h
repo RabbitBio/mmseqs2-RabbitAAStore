@@ -8,6 +8,8 @@
 #include "Matcher.h"
 #include "AAStoreTargetReader.h"
 
+class AAStoreSequenceAccess;
+
 class Alignment {
 public:
     Alignment(const std::string &querySeqDB,
@@ -123,24 +125,14 @@ private:
     bool useAAStoreTarget;
     bool aaStoreDirect;
 
-    bool mapTargetSequence(Sequence& sequence, size_t dbId, unsigned int dbKey,
-                           unsigned int threadIdx, std::string& scratch,
-                           const AAStoreTargetReader::Batch* batch);
-
-    char* getTargetSequenceData(size_t dbId, unsigned int threadIdx,
-                                size_t& seqLen,
-                                std::string& scratch,
-                                const AAStoreTargetReader::Batch* batch);
-
     bool reversePrefilterResult;
 
     static size_t estimateHDDMemoryConsumption(int dbSize, int maxSeqs);
 
     void computeAlternativeAlignment(unsigned int queryDbKey, Sequence &dbSeq,
                                      std::vector<Matcher::result_t> &vector, Matcher &matcher,
-                                     float covThr, float evalThr, int swMode, int thread_idx,
-                                     std::string& scratch,
-                                     const AAStoreTargetReader::Batch* batch);
+                                     float covThr, float evalThr, int swMode,
+                                     AAStoreSequenceAccess& sequences);
 };
 
 #endif

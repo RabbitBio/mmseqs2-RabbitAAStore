@@ -137,6 +137,7 @@ endif ()
 
 target_link_libraries(mmseqs-framework tinyexpr ${ZSTD_LIBRARIES} microtar tantan)
 target_link_libraries(mmseqs-framework aastore)
+
 # if (CYGWIN)
 #     target_link_libraries(mmseqs-framework nedmalloc)
 # endif ()
@@ -284,6 +285,10 @@ if (NOT FRAMEWORK_ONLY)
     add_executable(test_aastore_reader EXCLUDE_FROM_ALL test/TestAAStoreReader.cpp)
     mmseqs_setup_derived_target(test_aastore_reader)
     target_link_libraries(test_aastore_reader version)
+
+    add_executable(test_aastore_sequence_access EXCLUDE_FROM_ALL test/TestAAStoreSequenceAccess.cpp)
+    mmseqs_setup_derived_target(test_aastore_sequence_access)
+    target_link_libraries(test_aastore_sequence_access version)
 
     if (HAVE_TESTS)
         add_subdirectory(test)

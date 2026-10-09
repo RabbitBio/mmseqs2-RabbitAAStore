@@ -1115,6 +1115,11 @@ void DBReader<T>::moveDb(const std::string &srcDbName, const std::string &dstDbN
     if (FileUtil::fileExists((srcDbName + ".lookup").c_str())) {
         FileUtil::move((srcDbName + ".lookup").c_str(), (dstDbName + ".lookup").c_str());
     }
+    for (const char* suffix : {".aastore.path", ".aastore.ids"}) {
+        if (FileUtil::fileExists((srcDbName + suffix).c_str())) {
+            FileUtil::move((srcDbName + suffix).c_str(), (dstDbName + suffix).c_str());
+        }
+    }
 }
 
 template<typename T>
@@ -1138,6 +1143,10 @@ void DBReader<T>::removeDb(const std::string &databaseName){
     std::string lookupFile = databaseName + ".lookup";
     if (FileUtil::fileExists(lookupFile.c_str())) {
         FileUtil::remove(lookupFile.c_str());
+    }
+    for (const char* suffix : {".aastore.path", ".aastore.ids"}) {
+        const std::string file = databaseName + suffix;
+        if (FileUtil::fileExists(file.c_str())) FileUtil::remove(file.c_str());
     }
 }
 
@@ -1170,6 +1179,8 @@ void copyLinkDb(const std::string &databaseName, const std::string &outDb, DBFil
 
     const DBSuffix suffices[] = {
         { DBFiles::DATA_INDEX,    ".index"            },
+        { DBFiles::DATA_INDEX,    ".aastore.path"     },
+        { DBFiles::DATA_INDEX,    ".aastore.ids"      },
         { DBFiles::DATA_DBTYPE,   ".dbtype"           },
         { DBFiles::HEADER,        "_h"                },
         { DBFiles::HEADER_INDEX,  "_h.index"          },

@@ -259,6 +259,16 @@ struct Store::Impl {
                metadata_.start_position(id);
     }
 
+    uint64_t name_length(SequenceId id) const {
+        if (!names_) throw std::runtime_error("store has no name column");
+        return names_->length(id);
+    }
+
+    uint64_t description_length(SequenceId id) const {
+        if (!descriptions_) throw std::runtime_error("store has no description column");
+        return descriptions_->length(id);
+    }
+
     // 把单个序列解码到由 Store 调整大小的字符串中。
     void get_into(SequenceId id, std::string& output) const {
         if (id >= size()) throw std::out_of_range("sequence id out of range");
@@ -480,6 +490,14 @@ bool Store::has_descriptions() const noexcept {
 // 返回指定序列的 residue 长度。
 uint64_t Store::sequence_length(SequenceId id) const {
     return impl_->sequence_length(id);
+}
+
+uint64_t Store::name_length(SequenceId id) const {
+    return impl_->name_length(id);
+}
+
+uint64_t Store::description_length(SequenceId id) const {
+    return impl_->description_length(id);
 }
 
 // 返回运行时选中的 5-bit 解码内核名称。

@@ -589,6 +589,7 @@ public:
     int createdbMode;
     bool shuffleDatabase;
     bool aastore;
+    bool aastoreRepresentativeOnly;
 
     // splitsequence
     int sequenceOverlap;
@@ -956,6 +957,7 @@ public:
     PARAMETER(PARAM_CREATEDB_MODE)
     PARAMETER(PARAM_SHUFFLE)
     PARAMETER(PARAM_AASTORE)
+    PARAMETER(PARAM_AASTORE_REPRESENTATIVE_ONLY)
     PARAMETER(PARAM_WRITE_LOOKUP)
 
     // convert2fasta
@@ -1182,6 +1184,7 @@ public:
     std::vector<MMseqsParameter*> swapresult;
     std::vector<MMseqsParameter*> swapdb;
     std::vector<MMseqsParameter*> createseqfiledb;
+    std::vector<MMseqsParameter*> aastoreexportfasta;
     std::vector<MMseqsParameter*> filterDb;
     std::vector<MMseqsParameter*> offsetalignment;
     std::vector<MMseqsParameter*> proteinaln2nucl;
