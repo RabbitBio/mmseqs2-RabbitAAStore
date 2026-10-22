@@ -296,6 +296,9 @@ void bind_options(py::module_& module) {
         .value("ByteRange", StorageMode::ByteRange)
         .value("PrefixMemory", StorageMode::PrefixMemory)
         .value("FullMemory", StorageMode::FullMemory);
+    py::enum_<IndexLoadMode>(module, "IndexLoadMode")
+        .value("Mmap", IndexLoadMode::Mmap)
+        .value("Read", IndexLoadMode::Read);
     py::enum_<IoBackend>(module, "IoBackend")
         .value("Auto", IoBackend::Auto).value("Pread", IoBackend::Pread)
         .value("IoUring", IoBackend::IoUring);
@@ -317,19 +320,22 @@ void bind_options(py::module_& module) {
         .def_readwrite("overwrite", &BuildOptions::overwrite)
         .def_readwrite("write_names", &BuildOptions::write_names)
         .def_readwrite("write_descriptions", &BuildOptions::write_descriptions);
-    py::class_<StoreOptions>(module, "StoreOptions", "Storage mode, preload budget and optional text residency.")
-        .def(py::init([](StorageMode mode, uint64_t cache, size_t threads, bool names, bool descriptions) {
-            return StoreOptions{mode, cache, threads, names, descriptions};
+    py::class_<StoreOptions>(module, "StoreOptions", "Storage mode, preload budget, text residency and index loading.")
+        .def(py::init([](StorageMode mode, uint64_t cache, size_t threads, bool names,
+                         bool descriptions, IndexLoadMode indexes) {
+            return StoreOptions{mode, cache, threads, names, descriptions, indexes};
         }), py::kw_only(), py::arg("storage_mode") = StorageMode::ByteRange,
             py::arg("cache_bytes") = 0, py::arg("threads") = 8,
-            py::arg("resident_names") = false, py::arg("resident_descriptions") = false)
+            py::arg("resident_names") = false, py::arg("resident_descriptions") = false,
+            py::arg("index_load_mode") = IndexLoadMode::Mmap)
         .def("validate", &StoreOptions::validate,
              "Validate storage settings without opening files; invalid settings raise ValueError.")
         .def_readwrite("storage_mode", &StoreOptions::storage_mode)
         .def_readwrite("cache_bytes", &StoreOptions::cache_bytes)
         .def_readwrite("threads", &StoreOptions::threads)
         .def_readwrite("resident_names", &StoreOptions::resident_names)
-        .def_readwrite("resident_descriptions", &StoreOptions::resident_descriptions);
+        .def_readwrite("resident_descriptions", &StoreOptions::resident_descriptions)
+        .def_readwrite("index_load_mode", &StoreOptions::index_load_mode);
     py::class_<ReadOptions>(module, "ReadOptions", "Read scheduling, I/O backend and optional diagnostic settings.")
         .def(py::init([](size_t threads, IoBackend backend, size_t depth, uint64_t buffer,
                          bool sorted, uint64_t gap, uint64_t merged,
@@ -438,6 +444,7 @@ void bind_store(py::module_& module) {
         .def_property_readonly("total_residues", [](const PythonStore& self) { return self.acquire()->total_residues(); })
         .def_property_readonly("packed_bytes", [](const PythonStore& self) { return self.acquire()->packed_bytes(); })
         .def_property_readonly("storage_mode", [](const PythonStore& self) { return self.acquire()->storage_mode(); })
+        .def_property_readonly("index_load_mode", [](const PythonStore& self) { return self.acquire()->index_load_mode(); })
         .def_property_readonly("resident_bytes", [](const PythonStore& self) { return self.acquire()->resident_bytes(); })
         .def_property_readonly("resident_text_bytes", [](const PythonStore& self) { return self.acquire()->resident_text_bytes(); })
         .def_property_readonly("preload_ns", [](const PythonStore& self) { return self.acquire()->preload_ns(); })

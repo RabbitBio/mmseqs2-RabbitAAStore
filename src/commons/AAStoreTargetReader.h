@@ -99,6 +99,12 @@ public:
                         size_t computeThreads = 1,
                         uint64_t stageMemoryReserve = 0,
                         bool enabled = false);
+    // TSV needs text columns only, never a packed-sequence cache.
+    bool openForHeaders(const std::string& database, size_t computeThreads,
+                        uint64_t stageMemoryReserve, bool fullHeader);
+    void getHeaderFields(size_t key, std::string& name,
+                         std::string& description) const;
+    bool headerDescriptionsEnabled() const noexcept;
 
     // Certified record columns retain either raw native-header separators or
     // the default AAStore name/description fields.
@@ -114,6 +120,7 @@ public:
                        RecordThreadBatch& batch, size_t readThreads = 1) const;
 
     static std::string associatedStorePath(const std::string& database);
+    static aastore::IndexLoadMode configuredIndexLoadMode();
     static void associateDatabase(const std::string& database,
                                   const std::string& store);
     static void associateSubsetDatabase(const std::string& database,
@@ -152,7 +159,8 @@ private:
     size_t store_id_for_mmseqs_id(size_t mmseqsId) const;
     bool openAssociated(const std::string& database, size_t computeThreads,
                         uint64_t stageMemoryReserve, bool preferRecordFields,
-                        uint64_t recordSafetyReserve, bool scoring);
+                        uint64_t recordSafetyReserve, bool scoring,
+                        bool headersOnly = false, bool fullHeader = false);
     void updateViewStatistics() const;
     void resetIdMap();
 
@@ -170,6 +178,7 @@ private:
     bool recordsEnabled_ = false;
     bool recordsDenseIds_ = false;
     bool recordHeaderNeedsSpace_ = false;
+    bool headerDescriptionsEnabled_ = false;
 };
 
 #endif

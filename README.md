@@ -38,6 +38,10 @@ The upstream prebuilt binaries listed below do not include this option.
 Without `--aastore`, sequence reads always use native MMseqs2, even when an
 AAStore is associated. Memory configuration is automatic; the adapter has
 no AAStore-specific environment variables.
+`--aastore-index-mode mmap|read` selects how AAStore sequence and text indexes
+are loaded. The default `mmap` uses reclaimable file mappings; `read` loads
+the complete indexes into Store-owned buffers. This option is forwarded through
+AAStore workflows and leaves sequence/text data storage selection unchanged.
 
 MMseqs2 (Many-against-Many sequence searching) is a software suite to search and cluster huge protein and nucleotide sequence sets. MMseqs2 is free and open source software implemented in C++ for Linux, MacOS, and (as beta version, via cygwin) Windows. The software is designed to run on multiple cores and servers and exhibits very good scalability. MMseqs2 can run 10000 times faster than BLAST. At 100 times its speed it achieves almost the same sensitivity. It can perform profile searches with the same sensitivity as PSI-BLAST at over 400 times its speed.
 

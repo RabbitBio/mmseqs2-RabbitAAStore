@@ -24,6 +24,11 @@ class StorageMode(_PybindEnum):
     PrefixMemory: ClassVar[StorageMode]
     FullMemory: ClassVar[StorageMode]
 
+class IndexLoadMode(_PybindEnum):
+    __members__: ClassVar[Dict[str, IndexLoadMode]]
+    Mmap: ClassVar[IndexLoadMode]
+    Read: ClassVar[IndexLoadMode]
+
 class IoBackend(_PybindEnum):
     __members__: ClassVar[Dict[str, IoBackend]]
     Auto: ClassVar[IoBackend]
@@ -55,9 +60,11 @@ class StoreOptions:
     threads: int
     resident_names: bool
     resident_descriptions: bool
+    index_load_mode: IndexLoadMode
     def __init__(self, *, storage_mode: StorageMode = StorageMode.ByteRange,
                  cache_bytes: int = 0, threads: int = 8,
-                 resident_names: bool = False, resident_descriptions: bool = False) -> None: ...
+                 resident_names: bool = False, resident_descriptions: bool = False,
+                 index_load_mode: IndexLoadMode = IndexLoadMode.Mmap) -> None: ...
     def validate(self) -> None: ...
 
 class ReadOptions:
@@ -287,6 +294,8 @@ class Store:
     def packed_bytes(self) -> int: ...
     @property
     def storage_mode(self) -> StorageMode: ...
+    @property
+    def index_load_mode(self) -> IndexLoadMode: ...
     @property
     def resident_bytes(self) -> int: ...
     @property

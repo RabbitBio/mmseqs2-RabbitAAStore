@@ -130,10 +130,21 @@ built = aastore.build_fasta(fasta, path, options, threads=4)
 | `threads` | `8` | 打开与预载阶段的线程预算 |
 | `resident_names` | `False` | 将名称数据预载入内存 |
 | `resident_descriptions` | `False` | 将描述数据预载入内存 |
+| `index_load_mode` | `IndexLoadMode.Mmap` | 只读映射索引；可选 `Read` 将完整索引读入自有内存 |
 
 启用 `resident_names` 或 `resident_descriptions` 后，打开库时将对应列的完整正文
-读入 `Store` 持有的内存缓冲。后续批读直接从该缓冲复制，不再读取正文文件；文本索引
-仍使用只读映射。`resident_text_bytes` 返回这些正文缓冲的总字节数，不是进程实时 RSS。
+读入 `Store` 持有的内存缓冲。后续批读直接从该缓冲复制，不再读取正文文件。
+`resident_text_bytes` 返回这些正文缓冲的总字节数，不含索引，也不是进程实时 RSS。
+
+`index_load_mode` 统一控制序列索引 `meta.bin` 及存在的 `names.meta`、
+`descriptions.meta`。默认 `Mmap` 使用只读文件映射；`Read` 在打开时完整读取这些
+索引，保存在 `Store` 自有内存中。它与序列、名称和描述正文的驻留选项独立。
+
+```python
+opening = aastore.StoreOptions(index_load_mode=aastore.IndexLoadMode.Read)
+with aastore.Store(path, opening) as store:
+    print(store.index_load_mode)
+```
 
 `PrefixMemory` 的前缀固定，不会动态淘汰或更换内容；完全命中前缀的序列从内存解码，
 其他序列仍按范围读取。`FullMemory` 在打开时预载全部 packed 序列数据。
@@ -349,7 +360,7 @@ with aastore.Store(path) as store:
 开启后还可查看 `layout_ns`、`range_plan_ns`、`read_ns`、`decode_ns` 等纳秒字段。
 io_uring 的 `io_workers` 和 `decode_workers` 描述同一组线程，不应相加。
 
-`Store` 还提供只读的 `total_residues`、`packed_bytes`、`storage_mode`、`resident_bytes`、
+`Store` 还提供只读的 `total_residues`、`packed_bytes`、`storage_mode`、`index_load_mode`、`resident_bytes`、
 `resident_text_bytes`、`preload_ns`、`has_names`、`has_descriptions` 和
 `decode_kernel_name`。包版本通过 `aastore.__version__` 取得。
 完整字段和签名见 [类型声明](../python/aastore/__init__.pyi)。

@@ -56,10 +56,11 @@ struct DatabaseCloser {
 template <typename Callback>
 void visitText(const std::filesystem::path& path, uint64_t count,
                bool withDescriptions, Callback callback) {
-    aastore::TextColumn names(path / "names.bin", path / "names.meta", count);
+    const auto indexMode = AAStoreTargetReader::configuredIndexLoadMode();
+    aastore::TextColumn names(path / "names.bin", path / "names.meta", count, false, indexMode);
     std::unique_ptr<aastore::TextColumn> descriptions;
     if (withDescriptions) descriptions = std::make_unique<aastore::TextColumn>(
-        path / "descriptions.bin", path / "descriptions.meta", count);
+        path / "descriptions.bin", path / "descriptions.meta", count, false, indexMode);
     aastore::ReadOptions options;
     options.threads = 1;
     options.input_sorted = true;

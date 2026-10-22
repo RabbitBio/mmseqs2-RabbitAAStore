@@ -44,6 +44,11 @@ enum class StorageMode : uint8_t {
     FullMemory = 3
 };
 
+enum class IndexLoadMode : uint8_t {
+    Mmap,
+    Read
+};
+
 struct StoreOptions {
     StorageMode storage_mode = StorageMode::ByteRange;
     // PrefixMemory 常驻 packed 前缀的字节上限。
@@ -54,8 +59,10 @@ struct StoreOptions {
     bool resident_names = false;
     // 打开时将完整描述正文读入 Store 持有的内存；与名称及序列驻留选项独立。
     bool resident_descriptions = false;
+    // 序列、名称和描述的边界索引：只读映射，或完整读入自有内存。
+    IndexLoadMode index_load_mode = IndexLoadMode::Mmap;
 
-    // 校验存储模式及前缀预算；零线程保留现有的单线程语义。
+    // 校验存储模式、索引加载方式及前缀预算；零线程保留现有的单线程语义。
     void validate() const;
 };
 

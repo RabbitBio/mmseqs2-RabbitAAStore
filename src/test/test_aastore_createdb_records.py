@@ -1,5 +1,6 @@
 """Check header-free AAStore construction and complete cluster workflows."""
 import argparse
+from collections import Counter
 import gzip
 import json
 from pathlib import Path
@@ -8,7 +9,7 @@ import sys
 
 sys.dont_write_bytecode = True
 from test_aastore_exports import (read_database, write_clusters, text_column,
-                                  same_file, replace_headers)
+                                  same_file, replace_headers, tsv_backend_log)
 
 
 def main():
@@ -94,7 +95,7 @@ def main():
             run(label + '_' + suffix + '_native', ['createtsv', native, native, clusters, expected_tsv, '--threads', 1, '-v', 0, *options])
             log = run(label + '_' + suffix + '_aa', ['createtsv', aa, aa, clusters, actual_tsv, '--aastore', 1, '--threads', 4, '-v', 3, *options])
             check(label + '_' + suffix + '_bytewise', same_file(expected_tsv, actual_tsv))
-            check(label + '_' + suffix + '_text_backend', 'fields=name,description native_header_db=0' in log)
+            check(label + '_' + suffix + '_text_backend', tsv_backend_log(log, '--full-header' in options))
 
         if number == 4:
             # Soft-createdb payload links are not an export dependency either.
@@ -128,6 +129,65 @@ def main():
                     destination.rename(artifact)
 
         if number == 0:
+            # More than four scheduling chunks exercise the same OpenMP TSV
+            # loop in both backends. Parallel output may reorder whole records;
+            # compare row multiplicities and separately check keyed DB records.
+            parallel_clusters = root / 'tsv_parallel_clusters'
+            parallel_rows = [(key, [key, key, (key + 137) % len(names)])
+                             for key in reversed(range(4002))]
+            parallel_rows.append((4002, []))
+            write_clusters(parallel_clusters, parallel_rows)
+            parallel_columns = root / 'tsv_parallel_columns'
+            write_clusters(parallel_columns,
+                [(key, ['labelA\t{}\t7'.format(key),
+                        'labelA\t{}\t7'.format(key),
+                        'labelB\t{}\t8'.format((key + 137) % len(names))])
+                 for key in reversed(range(4002))] + [(4002, [])])
+            parallel_cases = [
+                ('default', parallel_clusters, True, []),
+                ('full', parallel_clusters, True, ['--full-header', 1]),
+                ('first', parallel_clusters, True, ['--first-seq-as-repr', 1]),
+                ('no_target', parallel_clusters, False, []),
+                ('no_target_full', parallel_clusters, False, ['--full-header', 1]),
+                ('later', parallel_columns, True, ['--target-column', 2]),
+            ]
+            for suffix, result_db, has_target, options in parallel_cases:
+                outputs = []
+                for source_db, enabled in ((native, 0), (aa, 1)):
+                    output = root / ('parallel_' + suffix + '_' + str(enabled) + '.tsv')
+                    source_args = [source_db, source_db] if has_target else [source_db]
+                    log = run('parallel_' + suffix + '_' + str(enabled),
+                        ['createtsv', *source_args, result_db, output,
+                         '--aastore', enabled, '--threads', 4, '-v', 3, *options])
+                    outputs.append(Counter(output.read_bytes().splitlines(keepends=True)))
+                    if enabled:
+                        check('parallel_' + suffix + '_text_only_backend',
+                              tsv_backend_log(log, '--full-header' in options))
+                check('parallel_' + suffix + '_row_multiset', outputs[0] == outputs[1])
+                check('parallel_' + suffix + '_row_count', sum(outputs[1].values()) == 4002 * 3)
+                check('parallel_' + suffix + '_duplicate_rows', max(outputs[1].values()) >= 2)
+
+            for compressed_output in (0, 1):
+                keyed_results = []
+                for source_db, enabled in ((native, 0), (aa, 1)):
+                    suffix = '{}_{}'.format(compressed_output, enabled)
+                    output = root / ('parallel_db_' + suffix)
+                    run('parallel_db_' + suffix, ['createtsv', source_db, source_db,
+                        parallel_clusters, output, '--aastore', enabled, '--threads', 4,
+                        '--db-output', 1, '--compressed', compressed_output, '-v', 0])
+                    if compressed_output:
+                        unpacked = root / ('parallel_unpacked_' + suffix)
+                        run('parallel_unpack_' + suffix, ['decompress', output, unpacked,
+                            '--threads', 4, '-v', 0])
+                        output = unpacked
+                    keyed_results.append(read_database(output))
+                check('parallel_db{}_keyed_records'.format(compressed_output),
+                      keyed_results[0] == keyed_results[1])
+                check('parallel_db{}_record_count'.format(compressed_output),
+                      len(keyed_results[1]) == 4003)
+                check('parallel_db{}_empty_record'.format(compressed_output),
+                      keyed_results[1][4002] == b'\0')
+
             # Query labels come from the first target token verbatim when no
             # target database was provided, even when it contains leading zeroes.
             numeric = root / 'tsv_numeric_tokens'

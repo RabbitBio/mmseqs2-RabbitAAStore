@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace aastore {
@@ -20,7 +19,8 @@ public:
     TextColumn(const std::filesystem::path& data_path,
                const std::filesystem::path& metadata_path,
                uint64_t expected_records,
-               bool resident = false);
+               bool resident = false,
+               IndexLoadMode index_load_mode = IndexLoadMode::Mmap);
     // 关闭文件、释放常驻正文并解除元数据映射。
     ~TextColumn();
 

@@ -255,7 +255,7 @@ def main():
                   log.count('AAStore aastoreexportfasta: batch_get_records fields=all') ==
                   (2 if enabled else 0))
             check(label + '_tsv_reader',
-                  ('AAStore createtsv: batch_get_records fields=name,description' in log) == enabled)
+                  ('AAStore createtsv: fields=name native_header_db=0' in log) == enabled)
             if enabled:
                 stores = {store.resolve() for store in tmp.glob('*/input.aastore')}
                 check(label + '_automatic_store', len(stores) == 1)

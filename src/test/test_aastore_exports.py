@@ -52,6 +52,13 @@ def same_file(left, right):
                 return True
 
 
+def tsv_backend_log(log, full_header=False, threads=4):
+    fields = 'name,description' if full_header else 'name'
+    return ('AAStore createtsv: fields={} native_header_db=0 threads={} '
+            'packed_resident_bytes=0 packed_preload_seconds=0'.format(fields, threads)
+            in log)
+
+
 def text_column(store, name):
     """Read AATEXT1 independently so construction has a byte-level oracle."""
     metadata = (store / (name + '.meta')).read_bytes()
@@ -150,12 +157,14 @@ def main():
         log = run(label + '_aa', ['createtsv', aa, aa, clusters, actual,
                   '--aastore', 1, '--threads', 4, '-v', 3, *options])
         check(label + '_bytes', same_file(expected, actual))
-        check(label + '_text_backend', 'fields=name,description native_header_db=0' in log)
+        check(label + '_text_backend', tsv_backend_log(log, '--full-header' in options))
 
     fasta = root / 'input.fa'
     alphabet = 'ACDEFGHIKLMNPQRSTVWY'
-    fasta.write_text(''.join('>sp|P{:05d}|E{}\t\tdescription {}  \n{}\n'.format(
-        index, index, index, alphabet * (index % 5 + 1)) for index in range(128)) +
+    # Repeated cluster members include both populated and empty descriptions.
+    fasta.write_text(''.join('>sp|P{:05d}|E{}{}\n{}\n'.format(
+        index, index, '' if index == 3 else '\t\tdescription {}  '.format(index),
+        alphabet * (index % 5 + 1)) for index in range(128)) +
         '>empty empty sequence\n\n')
 
     for shuffle, compressed in ((0, 0), (1, 0), (1, 1)):

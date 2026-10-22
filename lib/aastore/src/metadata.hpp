@@ -1,7 +1,9 @@
-// 文件职责：声明 AAPCMP3 序列边界元数据的只读映射与查询接口。
+// 文件职责：声明 AAPCMP3 序列边界元数据的加载与查询接口。
 // 通过块基址和 32 位块内偏移还原全局残基位置，避免为每条序列保存完整 64 位位置。
 #ifndef AASTORE_METADATA_HPP
 #define AASTORE_METADATA_HPP
+
+#include "index_data.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,18 +11,19 @@
 
 namespace aastore {
 
-// 序列边界索引读取器：持有 meta.bin 的只读映射，按 ID 查询字符起点。
+// 序列边界索引读取器：持有 meta.bin 的映射或读取缓冲，按 ID 查询字符起点。
 // 相邻边界之差就是序列长度；不持有或解码 packed.bin 的序列数据。
 class Metadata {
 public:
-    // 校验 AAPCMP3 元数据并建立只读映射。
-    explicit Metadata(const std::filesystem::path& store);
-    // 解除元数据映射。
+    // 校验 AAPCMP3 元数据并按配置加载索引。
+    explicit Metadata(const std::filesystem::path& store,
+                      IndexLoadMode mode = IndexLoadMode::Mmap);
+    // 释放元数据资源。
     ~Metadata();
 
-    // 禁止复制，避免重复释放同一个映射。
+    // 禁止复制，避免重复释放同一份索引。
     Metadata(const Metadata&) = delete;
-    // 禁止复制赋值，保持映射的独占所有权。
+    // 禁止复制赋值，保持索引的独占所有权。
     Metadata& operator=(const Metadata&) = delete;
 
     // 返回序列总数，不包括末尾哨兵边界。
@@ -33,9 +36,9 @@ public:
     uint64_t start_position(uint64_t sequence_index) const;
 
 private:
-    // 读取并映射当前 AAPCMP3 元数据。
-    void open(const std::filesystem::path& store);
-    // 解除映射并重置指针和映射相关计数。
+    // 读取并按配置加载当前 AAPCMP3 元数据。
+    void open(const std::filesystem::path& store, IndexLoadMode mode);
+    // 释放索引并重置指针与相关计数。
     void clear() noexcept;
 
     // 序列条数；边界数组另有一个末尾哨兵，因此共 sequence_count_ + 1 项。
@@ -43,10 +46,8 @@ private:
     // 所有序列的字符总数，也是最后一个边界的位置；不是 packed 字节数。
     uint64_t total_residues_ = 0;
 
-    // meta.bin 只读映射的起点；由本对象负责 munmap，下面两个数组借用它。
-    void* mapping_ = nullptr;
-    // 整个映射的字节数，包含文件头、偏移数组和块基址数组。
-    size_t mapping_bytes_ = 0;
+    // 统一拥有索引映射或完整缓冲，下面两个数组借用它。
+    IndexData index_data_;
     // 按全局边界编号索引的 32 位块内字符偏移，共 sequence_count_ + 1 项。
     const uint32_t* offsets_ = nullptr;
     // 64 位块基址数组的字节起点；可能未按 8 字节对齐，查询时用 memcpy 读取。

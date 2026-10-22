@@ -149,6 +149,7 @@ int clusteringworkflow(int argc, const char **argv, const Command& command) {
     cmd.addVariable("RUNNER", par.runner.c_str());
     cmd.addVariable("MERGECLU_PAR", par.createParameterString(par.threadsandcompression).c_str());
     cmd.addVariable("VERBOSITY", par.createParameterString(par.onlyverbosity).c_str());
+    cmd.addVariable("AASTORE_INDEX_PAR", par.createParameterString({&par.PARAM_AASTORE_INDEX_MODE}, true).c_str());
 
     if (isNucleotideDb) {
         par.forwardFrames = "1";

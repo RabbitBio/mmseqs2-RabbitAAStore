@@ -26,6 +26,10 @@ void StoreOptions::validate() const {
         default:
             throw std::invalid_argument("unknown storage mode");
     }
+    if (index_load_mode != IndexLoadMode::Mmap &&
+        index_load_mode != IndexLoadMode::Read) {
+        throw std::invalid_argument("unknown index load mode");
+    }
 }
 
 void ReadOptions::validate() const {

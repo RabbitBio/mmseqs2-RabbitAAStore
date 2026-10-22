@@ -201,6 +201,9 @@ if (store.has_names()) {
 ```
 
 仅名称可用 `RecordFields::Name`，描述为 `Description`，默认 `All` 请求三列。
+单条名称或描述也统一使用此接口，例如
+`store.batch_get_records({id}, aastore::RecordFields::Name)`；同时读取二者时使用
+`RecordFields::Name | RecordFields::Description`。
 请求库中不存在的列会抛出异常；未选中的列不执行本次批读。`RecordBatch` 的
 `name()`、`description()`、`sequence()` 返回副本，对应 `*_view()` 借用各列的批次存储。
 名称和描述的长度按字节计算；各列结果及统计位于 `names`、`descriptions`、`sequences`。

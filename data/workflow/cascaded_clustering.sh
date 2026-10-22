@@ -43,7 +43,7 @@ fi
 
 if notExists "${TMP_PATH}/input_step_redundancy.dbtype"; then
     # shellcheck disable=SC2086
-    "$MMSEQS" createsubdb "${TMP_PATH}/clu_redundancy" "$INPUT" "${TMP_PATH}/input_step_redundancy" ${VERBOSITY} --subdb-mode 1 \
+    "$MMSEQS" createsubdb "${TMP_PATH}/clu_redundancy" "$INPUT" "${TMP_PATH}/input_step_redundancy" ${VERBOSITY} ${AASTORE_INDEX_PAR} --subdb-mode 1 \
         || faill "createsubdb died"
 fi
 
@@ -92,7 +92,7 @@ while [ "$STEP" -lt "$STEPS" ]; do
     else
         if notExists "$NEXTINPUT.dbtype"; then
             # shellcheck disable=SC2086
-            "$MMSEQS" createsubdb "${TMP_PATH}/clu_step$STEP" "$INPUT" "$NEXTINPUT" ${VERBOSITY} --subdb-mode 1 \
+            "$MMSEQS" createsubdb "${TMP_PATH}/clu_step$STEP" "$INPUT" "$NEXTINPUT" ${VERBOSITY} ${AASTORE_INDEX_PAR} --subdb-mode 1 \
                 || fail "Order step $STEP died"
         fi
     fi
@@ -144,13 +144,13 @@ if [ -n "$REASSIGN" ]; then
         # create sequences database that were wrong assigned
         if notExists "${TMP_PATH}/seq_wrong_assigned.dbtype"; then
             # shellcheck disable=SC2086
-            "$MMSEQS" createsubdb "${TMP_PATH}/clu_not_accepted_swap" "$SOURCE" "${TMP_PATH}/seq_wrong_assigned" ${VERBOSITY} \
+            "$MMSEQS" createsubdb "${TMP_PATH}/clu_not_accepted_swap" "$SOURCE" "${TMP_PATH}/seq_wrong_assigned" ${VERBOSITY} ${AASTORE_INDEX_PAR} \
                      || fail "createsubdb1 reassign died"
         fi
         # build seed sequences
         if notExists "${TMP_PATH}/seq_seeds.dbtype"; then
             # shellcheck disable=SC2086
-            "$MMSEQS" createsubdb "${TMP_PATH}/clu" "$SOURCE" "${TMP_PATH}/seq_seeds" ${VERBOSITY} \
+            "$MMSEQS" createsubdb "${TMP_PATH}/clu" "$SOURCE" "${TMP_PATH}/seq_seeds" ${VERBOSITY} ${AASTORE_INDEX_PAR} \
                     || fail "createsubdb2 reassign died"
         fi
         PARAM=PREFILTER${STEP}_PAR

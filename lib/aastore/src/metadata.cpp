@@ -1,16 +1,12 @@
-// 文件职责：校验并映射 AAPCMP3 元数据，查询序列边界及 packed 数据大小。
-// 负责元数据格式、尺寸和索引范围检查，以及映射资源的释放。
+// 文件职责：校验并加载 AAPCMP3 元数据，查询序列边界及 packed 数据大小。
+// 负责元数据格式、尺寸和索引范围检查，以及索引资源的释放。
 #include "metadata.hpp"
 
-#include <cerrno>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <sys/mman.h>
-#include <unistd.h>
 
 namespace aastore {
 namespace {
@@ -30,37 +26,19 @@ size_t checked_size(uint64_t value, const char* description) {
     return static_cast<size_t>(value);
 }
 
-// 将文件的指定长度映射为只读内存，并在映射后关闭描述符。
-void* map_read_only(const std::filesystem::path& path, size_t bytes) {
-    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) {
-        throw std::runtime_error("cannot open " + path.string() + ": " +
-                                 std::strerror(errno));
-    }
-    void* mapping = ::mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE,
-                           descriptor, 0);
-    const int saved_errno = errno;
-    ::close(descriptor);
-    if (mapping == MAP_FAILED) {
-        throw std::runtime_error("cannot mmap " + path.string() + ": " +
-                                 std::strerror(saved_errno));
-    }
-    return mapping;
-}
-
 }  // namespace
 
-// 打开并校验数据库元数据，建立只读偏移映射。
-Metadata::Metadata(const std::filesystem::path& store) { open(store); }
+// 打开并校验数据库元数据，加载边界索引。
+Metadata::Metadata(const std::filesystem::path& store, IndexLoadMode mode) {
+    open(store, mode);
+}
 
-// 解除元数据文件映射。
+// 释放元数据索引资源。
 Metadata::~Metadata() { clear(); }
 
-// 解除映射并重置依赖映射的偏移指针与计数。
+// 释放索引并重置偏移指针与计数。
 void Metadata::clear() noexcept {
-    if (mapping_ != nullptr) ::munmap(mapping_, mapping_bytes_);
-    mapping_ = nullptr;
-    mapping_bytes_ = 0;
+    index_data_.clear();
     offsets_ = nullptr;
     bases_ = nullptr;
     block_shift_ = 0;
@@ -85,7 +63,7 @@ uint64_t Metadata::start_position(uint64_t index) const {
 }
 
 // 读取并校验唯一支持的 AAPCMP3 元数据格式。
-void Metadata::open(const std::filesystem::path& store) {
+void Metadata::open(const std::filesystem::path& store, IndexLoadMode mode) {
     const std::filesystem::path path = store / "meta.bin";
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("cannot open " + path.string());
@@ -141,9 +119,8 @@ void Metadata::open(const std::filesystem::path& store) {
     }
 
     clear();
-    mapping_bytes_ = checked_size(expected_bytes, "metadata exceeds address space");
-    mapping_ = map_read_only(path, mapping_bytes_);
-    const char* base = static_cast<const char*>(mapping_);
+    index_data_.open(path, checked_size(expected_bytes, "metadata exceeds address space"), mode);
+    const char* base = index_data_.data();
     offsets_ = reinterpret_cast<const uint32_t*>(base + kHeaderBytes);
     bases_ = base + kHeaderBytes + offsets_bytes;
     block_shift_ = static_cast<uint32_t>(block_shift);

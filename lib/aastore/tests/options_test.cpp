@@ -67,6 +67,10 @@ void check_valid_options(const Fixture& fixture) {
     aastore::BuildOptions{}.validate();
     aastore::StoreOptions{}.validate();
     aastore::ReadOptions{}.validate();
+    expect(aastore::StoreOptions{}.index_load_mode == aastore::IndexLoadMode::Mmap,
+           "index loading defaults to mmap");
+    expect(aastore::Store(fixture.path).index_load_mode() == aastore::IndexLoadMode::Mmap,
+           "default Store uses mmap indices");
 
     aastore::ReadOptions options;
     options.threads = 0;
@@ -92,16 +96,23 @@ void check_valid_options(const Fixture& fixture) {
         store_options.cache_bytes = mode == aastore::StorageMode::PrefixMemory ? 1 : 0;
         store_options.threads = 0;
         store_options.validate();
-        aastore::Store store(fixture.path, store_options);
-        const auto batch = store.get(ids, options);
-        for (size_t i = 0; i < ids.size(); ++i) {
-            expect(batch.view(i) == fixture.sequences[ids[i]],
-                   "zero budgets preserve reads and repeated sorted IDs");
-        }
-        const auto sequential = store.sequential_get(0, fixture.sequences.size(), options);
-        for (size_t i = 0; i < fixture.sequences.size(); ++i) {
-            expect(sequential.view(i) == fixture.sequences[i],
-                   "zero thread budget preserves sequential reads");
+        for (const auto index_mode : {aastore::IndexLoadMode::Mmap,
+                                     aastore::IndexLoadMode::Read}) {
+            store_options.index_load_mode = index_mode;
+            store_options.validate();
+            aastore::Store store(fixture.path, store_options);
+            expect(store.index_load_mode() == index_mode,
+                   "Store retains the selected index loading mode");
+            const auto batch = store.get(ids, options);
+            for (size_t i = 0; i < ids.size(); ++i) {
+                expect(batch.view(i) == fixture.sequences[ids[i]],
+                       "zero budgets preserve reads and repeated sorted IDs");
+            }
+            const auto sequential = store.sequential_get(0, fixture.sequences.size(), options);
+            for (size_t i = 0; i < fixture.sequences.size(); ++i) {
+                expect(sequential.view(i) == fixture.sequences[i],
+                       "zero thread budget preserves sequential reads");
+            }
         }
     }
 }
@@ -136,6 +147,16 @@ void check_invalid_store(const Fixture& fixture) {
         for (const auto& path : {fixture.path, fixture.root / "missing-store"}) {
             expect_invalid([&] { aastore::Store store(path, options); },
                            "Store validates options before opening files");
+        }
+    }
+    for (const auto mode : {static_cast<aastore::IndexLoadMode>(99),
+                           static_cast<aastore::IndexLoadMode>(255)}) {
+        aastore::StoreOptions options;
+        options.index_load_mode = mode;
+        expect_invalid([&] { options.validate(); }, "public index loading validation");
+        for (const auto& path : {fixture.path, fixture.root / "missing-store"}) {
+            expect_invalid([&] { aastore::Store store(path, options); },
+                           "Store validates index loading before opening files");
         }
     }
 }

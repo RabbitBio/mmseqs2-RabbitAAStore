@@ -24,7 +24,7 @@ fi
 if notExists "${TMP_PATH}/cluster.tsv"; then
     TSV_PAR="${THREADS_PAR}"
     if [ -n "${AASTORE}" ]; then
-        TSV_PAR="${TSV_PAR} --aastore 1"
+        TSV_PAR="${TSV_PAR} --aastore 1 ${AASTORE_INDEX_PAR}"
     fi
     # shellcheck disable=SC2086
     "$MMSEQS" createtsv "${TMP_PATH}/input" "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/cluster.tsv" ${TSV_PAR} \

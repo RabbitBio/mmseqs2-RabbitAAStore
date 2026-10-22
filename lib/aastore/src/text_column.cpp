@@ -1,6 +1,7 @@
 // 文件职责：读取名称或描述列，校验文本索引并按请求合并范围、复制结果。
 // 支持自有内存中的常驻数据以及 pread、io_uring 读取，文本结果无需经过序列编解码器。
 #include "text_column.hpp"
+#include "index_data.hpp"
 
 #include "byte_range_planner.hpp"
 #include "io_uring_backend.hpp"
@@ -15,7 +16,6 @@
 #include <fstream>
 #include <limits>
 #include <stdexcept>
-#include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
 
@@ -203,13 +203,14 @@ void read_text_ranges(TextReadContext* ctx, size_t worker) noexcept {
 
 }  // namespace
 
-// 文本列资源所有者：映射 AATEXT1 索引，按配置持有文件描述符或完整文本缓冲。
+// 文本列资源所有者：加载 AATEXT1 索引，按配置持有文件描述符或完整文本缓冲。
 struct TextColumn::Impl {
     // 校验文本元数据和数据文件，常驻模式将完整文本读入自有缓冲。
     Impl(const std::filesystem::path& data_path,
          const std::filesystem::path& metadata_path,
          uint64_t expected_records,
-         bool resident)
+         bool resident,
+         IndexLoadMode index_load_mode)
         : resident_(resident) {
         std::ifstream input(metadata_path, std::ios::binary);
         char magic[8] = {};
@@ -241,51 +242,31 @@ struct TextColumn::Impl {
                 "inconsistent text-column metadata: " + metadata_path.string());
         }
         const uint64_t bases_bytes = (block_count + 1) * sizeof(uint64_t);
-        mapping_bytes_ = kTextHeaderBytes + offsets_bytes + bases_bytes;
-        if (std::filesystem::file_size(metadata_path) != mapping_bytes_ ||
-            mapping_bytes_ > static_cast<uint64_t>(
+        const uint64_t index_bytes = kTextHeaderBytes + offsets_bytes + bases_bytes;
+        if (std::filesystem::file_size(metadata_path) != index_bytes ||
+            index_bytes > static_cast<uint64_t>(
                 std::numeric_limits<size_t>::max())) {
             throw std::runtime_error(
                 "inconsistent text-column metadata: " + metadata_path.string());
         }
 
-        const int metadata_descriptor = ::open(
-            metadata_path.c_str(), O_RDONLY | O_CLOEXEC);
-        if (metadata_descriptor < 0) {
-            throw std::runtime_error("cannot open " + metadata_path.string());
-        }
-        mapping_ = ::mmap(nullptr, static_cast<size_t>(mapping_bytes_),
-                          PROT_READ, MAP_PRIVATE, metadata_descriptor, 0);
-        const int saved_errno = errno;
-        ::close(metadata_descriptor);
-        if (mapping_ == MAP_FAILED) {
-            mapping_ = nullptr;
-            throw std::runtime_error(
-                "cannot mmap text metadata: " +
-                std::string(std::strerror(saved_errno)));
-        }
-        const char* base = static_cast<const char*>(mapping_);
+        index_data_.open(metadata_path, static_cast<size_t>(index_bytes), index_load_mode);
+        const char* base = index_data_.data();
         offsets_ = reinterpret_cast<const uint32_t*>(
             base + kTextHeaderBytes);
         bases_ = base + kTextHeaderBytes + offsets_bytes;
         if (offset(0) != 0 || offset(record_count_) != total_bytes_) {
-            ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-            mapping_ = nullptr;
             throw std::runtime_error("invalid text-column offset endpoints");
         }
 
         descriptor_ = ::open(data_path.c_str(), O_RDONLY | O_CLOEXEC);
         if (descriptor_ < 0) {
-            ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-            mapping_ = nullptr;
             throw std::runtime_error("cannot open " + data_path.string());
         }
         const off_t bytes = ::lseek(descriptor_, 0, SEEK_END);
         if (bytes < 0 || static_cast<uint64_t>(bytes) != total_bytes_) {
             ::close(descriptor_);
             descriptor_ = -1;
-            ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-            mapping_ = nullptr;
             throw std::runtime_error("text-column data size mismatch");
         }
         if (resident_) {
@@ -300,8 +281,6 @@ struct TextColumn::Impl {
             } catch (...) {
                 ::close(descriptor_);
                 descriptor_ = -1;
-                ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-                mapping_ = nullptr;
                 throw;
             }
             ::close(descriptor_);
@@ -309,12 +288,9 @@ struct TextColumn::Impl {
         }
     }
 
-    // 关闭文本文件并解除索引映射；常驻缓冲随成员析构释放。
+    // 关闭文本文件；索引和常驻缓冲随成员析构释放。
     ~Impl() {
         if (descriptor_ >= 0) ::close(descriptor_);
-        if (mapping_ != nullptr) {
-            ::munmap(mapping_, static_cast<size_t>(mapping_bytes_));
-        }
     }
 
     // 返回已读入自有缓冲的文本字节数，不含元数据，也不代表实时 RSS。
@@ -357,6 +333,39 @@ struct TextColumn::Impl {
         batch.offsets.resize(ids.size());
         batch.lengths.resize(ids.size());
         batch.stats.requested_strings = ids.size();
+        // 单条常驻文本或显式 pread 直接填充结果，不创建请求和范围规划。
+        if (ids.size() == 1 &&
+            (resident_ || options.io_backend == IoBackend::Pread)) {
+            if (ids[0] >= record_count_) {
+                throw std::out_of_range("text-column id out of range");
+            }
+            const uint64_t begin = offset(ids[0]), end = offset(ids[0] + 1);
+            if (end < begin || end > total_bytes_) {
+                throw std::runtime_error("invalid text-column boundaries");
+            }
+            const uint64_t bytes = end - begin;
+            if (bytes > static_cast<uint64_t>(
+                    std::numeric_limits<size_t>::max())) {
+                throw std::length_error("text batch exceeds address space");
+            }
+            batch.offsets[0] = 0;
+            batch.lengths[0] = bytes;
+            batch.storage.resize_uninitialized(static_cast<size_t>(bytes));
+            batch.stats.requested_bytes = bytes;
+            batch.stats.resident = resident_;
+            if (options.collect_diagnostics) batch.stats.unique_bytes = bytes;
+            if (bytes == 0) return batch;
+            if (resident_) {
+                std::memcpy(batch.storage.data(), resident_data_.data() + begin,
+                            static_cast<size_t>(bytes));
+            } else {
+                pread_exact(descriptor_, batch.storage.data(), bytes, begin);
+                batch.stats.ranges = 1;
+                batch.stats.read_bytes = bytes;
+                batch.stats.max_range_bytes = bytes;
+            }
+            return batch;
+        }
         std::vector<TextRequest> requests(ids.size());
         uint64_t output_bytes = 0;
         for (size_t i = 0; i < ids.size(); ++i) {
@@ -467,10 +476,8 @@ struct TextColumn::Impl {
     int descriptor_ = -1;
     // 是否在打开时将完整文本读入自有缓冲；此后批读不再读取正文文件。
     bool resident_ = false;
-    // 本对象拥有的文本索引只读映射，供 offsets_ 和 bases_ 借用。
-    void* mapping_ = nullptr;
-    // 索引映射的总字节数，析构 munmap 时使用。
-    uint64_t mapping_bytes_ = 0;
+    // 本对象拥有的文本索引映射或缓冲，供 offsets_ 和 bases_ 借用。
+    IndexData index_data_;
     // 常驻模式持有的完整文本；普通模式或空列时为空，生命周期与读取器一致。
     std::vector<char, NoInitAllocator<char>> resident_data_;
     // 按记录边界编号索引的 32 位块内字节偏移，共 record_count_ + 1 项。
@@ -483,11 +490,12 @@ struct TextColumn::Impl {
 TextColumn::TextColumn(const std::filesystem::path& data_path,
                        const std::filesystem::path& metadata_path,
                        uint64_t expected_records,
-                       bool resident)
+                       bool resident,
+                       IndexLoadMode index_load_mode)
     : impl_(std::make_unique<Impl>(
-          data_path, metadata_path, expected_records, resident)) {}
+          data_path, metadata_path, expected_records, resident, index_load_mode)) {}
 
-// 释放文本列文件和映射资源。
+// 释放文本列文件和索引资源。
 TextColumn::~TextColumn() = default;
 // 批量读取指定记录的文本，返回独立拥有数据的批次。
 TextBatch TextColumn::batch_get(const std::vector<SequenceId>& ids,

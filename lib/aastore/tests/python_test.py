@@ -129,11 +129,40 @@ class PythonInterfaceTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             aastore.build_fasta(self.fasta, path, options=object())
         self.assertFalse(aastore.ReadOptions().collect_diagnostics)
+        self.assertEqual(aastore.StoreOptions().index_load_mode, aastore.IndexLoadMode.Mmap)
         for options_type in (aastore.ReadOptions, aastore.StoreOptions, aastore.BuildOptions):
             with self.assertRaises(TypeError):
                 options_type(threads=-1)
             with self.assertRaises(TypeError):
                 options_type(unknown_option=True)
+
+    # 两种索引加载方式保持记录顺序、重复 ID 和顺读结果一致，且 Read 不映射索引文件。
+    def test_index_load_modes(self):
+        ids = [130, 1, 0, 2, 1, 4]
+        expected = [dict(name=self.names[i], description=self.descriptions[i],
+                         sequence=self.sequences[i]) for i in ids]
+        index_paths = {str((self.path / name).resolve())
+                       for name in ("meta.bin", "names.meta", "descriptions.meta")}
+        maps = Path("/proc/self/maps")
+        reads = aastore.ReadOptions(threads=2, io_backend=aastore.IoBackend.Pread)
+        for mode in (aastore.IndexLoadMode.Mmap, aastore.IndexLoadMode.Read):
+            with self.subTest(index_load_mode=mode):
+                with aastore.Store(self.path, aastore.StoreOptions(index_load_mode=mode)) as store:
+                    self.assertEqual(store.index_load_mode, mode)
+                    with self.assertRaises(AttributeError):
+                        store.index_load_mode = mode
+                    self.assertEqual(store.resident_bytes, 0)
+                    self.assertEqual(store.resident_text_bytes, 0)
+                    self.assertEqual(list(store.batch_get_records(ids, options=reads)), expected)
+                    self.assertEqual([store.sequence_length(i) for i in ids],
+                                     [len(self.sequences[i]) for i in ids])
+                    self.assertEqual(list(store.sequential_get(0, 5, reads)), self.sequences[:5])
+                    if maps.is_file():
+                        mapped = {fields[5].strip()
+                                  for line in maps.read_text().splitlines()
+                                  if len(fields := line.split(maxsplit=5)) == 6}
+                        self.assertEqual(index_paths & mapped,
+                                         index_paths if mode == aastore.IndexLoadMode.Mmap else set())
 
     # 无效配置在空请求和各读取路径上都被拒绝，且不创建库或修改输出。
     def test_option_validation(self):
@@ -157,6 +186,15 @@ class PythonInterfaceTest(unittest.TestCase):
             options = aastore.StoreOptions()
             options.storage_mode = mode
             with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):
+                    options.validate()
+                for path in (self.path, self.root / "missing-store"):
+                    with self.assertRaises(ValueError):
+                        aastore.Store(path, options)
+
+        for mode in (aastore.IndexLoadMode(99), aastore.IndexLoadMode(255)):
+            options = aastore.StoreOptions(index_load_mode=mode)
+            with self.subTest(invalid_index_load_mode=mode):
                 with self.assertRaises(ValueError):
                     options.validate()
                 for path in (self.path, self.root / "missing-store"):
@@ -370,6 +408,12 @@ class PythonInterfaceTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 selected.description(0)
             names = store.batch_get_records([1], aastore.RecordFields.Name)
+            self.assertEqual(list(names), [dict(name=self.names[1])])
+            descriptions = store.batch_get_records([1], aastore.RecordFields.Description)
+            self.assertEqual(list(descriptions), [dict(description=self.descriptions[1])])
+            for text_only in (names, descriptions):
+                self.assertEqual(text_only.sequences.stats.requested_sequences, 0)
+                self.assertEqual(text_only.sequences.stats.read_bytes, 0)
             with self.assertRaises(RuntimeError):
                 names.sequence(0)
             self.assertEqual(list(store.batch_get_records([1], aastore.RecordFields.None_)), [{}])

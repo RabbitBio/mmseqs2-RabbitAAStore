@@ -201,6 +201,8 @@ public:
     uint64_t packed_bytes() const noexcept;
     // 返回当前配置的序列存储模式。
     StorageMode storage_mode() const noexcept;
+    // 返回序列及文本边界索引的加载方式，与正文存储模式独立。
+    IndexLoadMode index_load_mode() const noexcept;
     // 返回已常驻的 packed 数据字节数，不含元数据。
     uint64_t resident_bytes() const;
     // 返回已载入自有缓冲的文本数据字节数，不含文本元数据。
@@ -256,7 +258,7 @@ public:
                                    SequenceId end_sequence,
                                    const std::vector<char*>& outputs,
                                    const ReadOptions& options = {}) const;
-    // 读取指定字段的记录批次，返回结果按输入 ID 顺序访问。
+    // 读取指定字段的记录批次，返回结果按输入 ID 顺序访问；单条也使用 {id}。
     RecordBatch batch_get_records(
         const std::vector<SequenceId>& ids,
         RecordFields fields = RecordFields::All,

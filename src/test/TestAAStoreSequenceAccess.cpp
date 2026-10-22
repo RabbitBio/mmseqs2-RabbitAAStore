@@ -19,6 +19,7 @@
 #include <vector>
 
 const char* binary_name = "test_aastore_sequence_access";
+DEFAULT_PARAMETER_SINGLETON_INIT
 
 namespace {
 constexpr size_t kWorkers = 4, kBatchBytes = 100;

@@ -15,8 +15,8 @@ The integration has seven parts:
 2. `rescorediagonal`: AAStore query/target access for same-database rescoring.
 3. `Alignment`: AAStore target access and same-database query access.
 4. `aastoreexportfasta`: complete and representative FASTA output through
-   `batch_get_records(All)`. `AAStoreTsvAdapter` supplies AAStore text fields
-   to same-source `createtsv --aastore`, sharing native TSV formatting.
+   `batch_get_records(All)`. Same-source `createtsv --aastore` substitutes
+   AAStore text fields inside the native parallel processing loop.
 5. `createsubdb`: propagation of the small `.aastore.path` association.
 6. `--aastore`: automatic construction in final MMseqs ID order and workflow
    parameter forwarding.
@@ -243,14 +243,32 @@ cluster key's header, matching the native representative-output convention.
 It does not affect clustering or the all-sequence export. Representative-only
 output does not support HH format.
 
-`AAStoreTsvAdapter` supplies accession and header fields to same-source
-`createtsv --aastore`; `TsvRowFormatter` keeps the native column and
-first-representative rules shared. Reading an accession does not copy the full
-description. Native `result2repseq`, `createseqfiledb` and `result2flat` remain
+`createtsv --aastore` retains native OpenMP scheduling, result parsing, column
+formatting and per-thread output. It reads names by default; `--full-header 1`
+also reads descriptions. Legacy raw header separators may require both fields
+to preserve native accession parsing. TSV never preloads packed sequences.
+Only the selected text columns are made resident when the memory budget allows;
+otherwise each thread uses `pread` and reuses its own text buffers.
+Native `result2repseq`, `createseqfiledb` and `result2flat` remain
 available for native databases with native headers; the AAStore easy workflows
 use direct record output instead.
 
 ## Memory policy
+
+`--aastore-index-mode mmap|read` selects the loading method for `meta.bin`,
+`names.meta` and `descriptions.meta`. The default `mmap` accesses these files
+through read-only mappings whose clean pages the kernel can reclaim. `read`
+reads each complete index into a Store-owned buffer; allocation or read errors
+fail the command rather than switching modes. Neither mode locks pages in RAM.
+The complete index sizes remain reserved in the memory budget in both modes.
+The option is forwarded through `easy-linclust`, `linclust`, `easy-cluster` and
+`cluster`, including subset creation, rescoring, alignment, TSV and FASTA output.
+It does not change the packed/text data storage mode or candidate scheduling.
+
+```bash
+./build-aastore/src/mmseqs easy-linclust proteins.fasta clusters tmp \
+  --aastore --aastore-index-mode read
+```
 
 The adapter automatically selects storage mode by sampling host and cgroup
 memory before opening AAStore:
@@ -310,6 +328,10 @@ python3 src/test/test_aastore_cli.py \
 python3 src/test/test_aastore_linclust.py \
   --mmseqs build-aastore/src/mmseqs \
   --workdir "$HOME/.cache/aastore-validation/linclust-test"
+
+python3 src/test/test_aastore_index_mode.py \
+  --mmseqs build-aastore/src/mmseqs \
+  --workdir "$HOME/.cache/aastore-validation/index-mode-test"
 
 python3 src/test/test_aastore_exports.py \
   --mmseqs build-aastore/src/mmseqs \

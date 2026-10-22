@@ -1,5 +1,6 @@
 #include "AAStoreMemoryBudget.h"
 #include "AAStoreTargetReader.h"
+#include "Parameters.h"
 
 #include <algorithm>
 #include <climits>
@@ -15,6 +16,7 @@
 #include <vector>
 
 const char* binary_name = "test_aastore_reader";
+DEFAULT_PARAMETER_SINGLETON_INIT
 
 namespace {
 

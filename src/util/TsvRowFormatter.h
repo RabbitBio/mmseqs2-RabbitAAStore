@@ -6,7 +6,6 @@
 #include <utility>
 
 // Both field providers use the native TSV layout and representative rule.
-// State survives a bounded AAStore batch that splits one result record.
 class TsvRowFormatter {
 public:
     TsvRowFormatter(size_t targetColumn, bool firstSeqRepr)

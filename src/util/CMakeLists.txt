@@ -1,5 +1,4 @@
 set(util_source_files
-        util/AAStoreTsvAdapter.cpp
         util/alignall.cpp
         util/alignbykmer.cpp
         util/appenddbtoindex.cpp

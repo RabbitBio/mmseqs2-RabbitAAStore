@@ -589,6 +589,7 @@ public:
     int createdbMode;
     bool shuffleDatabase;
     bool aastore;
+    std::string aastoreIndexMode;
     bool aastoreRepresentativeOnly;
 
     // splitsequence
@@ -957,6 +958,7 @@ public:
     PARAMETER(PARAM_CREATEDB_MODE)
     PARAMETER(PARAM_SHUFFLE)
     PARAMETER(PARAM_AASTORE)
+    PARAMETER(PARAM_AASTORE_INDEX_MODE)
     PARAMETER(PARAM_AASTORE_REPRESENTATIVE_ONLY)
     PARAMETER(PARAM_WRITE_LOOKUP)
 

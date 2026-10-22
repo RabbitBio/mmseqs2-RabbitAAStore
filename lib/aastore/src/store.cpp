@@ -120,7 +120,8 @@ std::unique_ptr<TextColumn> open_text_column(
         const char* metadata_name,
         const char* label,
         uint64_t sequence_count,
-        bool resident) {
+        bool resident,
+        IndexLoadMode index_load_mode) {
     const std::filesystem::path data_path = store_path / data_name;
     const std::filesystem::path metadata_path = store_path / metadata_name;
     const bool data_exists = std::filesystem::exists(data_path);
@@ -132,7 +133,7 @@ std::unique_ptr<TextColumn> open_text_column(
     }
     if (!data_exists) return nullptr;
     return std::make_unique<TextColumn>(
-        data_path, metadata_path, sequence_count, resident);
+        data_path, metadata_path, sequence_count, resident, index_load_mode);
 }
 
 }  // namespace
@@ -143,7 +144,8 @@ struct Store::Impl {
 
     // 打开存储文件，并按配置初始化文本列和 packed 数据缓存。
     Impl(const std::filesystem::path& path, const StoreOptions& options)
-        : metadata_(path), storage_mode_(options.storage_mode) {
+        : metadata_(path, options.index_load_mode), storage_mode_(options.storage_mode),
+          index_load_mode_(options.index_load_mode) {
         const std::filesystem::path packed_path = path / "packed.bin";
         packed_descriptor_ = ::open(
             packed_path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -158,10 +160,10 @@ struct Store::Impl {
             }
             names_ = open_text_column(
                 path, "names.bin", "names.meta", "name", size(),
-                options.resident_names);
+                options.resident_names, options.index_load_mode);
             descriptions_ = open_text_column(
                 path, "descriptions.bin", "descriptions.meta",
-                "description", size(), options.resident_descriptions);
+                "description", size(), options.resident_descriptions, options.index_load_mode);
             if (storage_mode_ == StorageMode::FullMemory) {
                 preload_full_packed(options.threads);
                 ::close(packed_descriptor_);
@@ -197,6 +199,7 @@ struct Store::Impl {
 
     // 返回当前 Store 使用的存储模式。
     StorageMode storage_mode() const noexcept { return storage_mode_; }
+    IndexLoadMode index_load_mode() const noexcept { return index_load_mode_; }
 
     // 返回序列 packed 数据当前占用的常驻内存字节数。
     uint64_t resident_bytes() const {
@@ -420,6 +423,7 @@ struct Store::Impl {
     Metadata metadata_;
     // 打开 Store 时确定的驻留模式，决定读取从文件、前缀还是全量内存取数据。
     StorageMode storage_mode_ = StorageMode::ByteRange;
+    IndexLoadMode index_load_mode_ = IndexLoadMode::Mmap;
     // 本对象拥有的 packed.bin 描述符；全量预加载后关闭并置为 -1。
     int packed_descriptor_ = -1;
     // 可选名称列读取器，列文件不存在时为空。
@@ -464,6 +468,10 @@ uint64_t Store::packed_bytes() const noexcept { return impl_->packed_bytes(); }
 // 返回 Store 当前使用的存储模式。
 StorageMode Store::storage_mode() const noexcept {
     return impl_->storage_mode();
+}
+
+IndexLoadMode Store::index_load_mode() const noexcept {
+    return impl_->index_load_mode();
 }
 
 // 返回 packed 序列数据的常驻内存字节数。

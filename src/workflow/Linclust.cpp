@@ -97,6 +97,7 @@ int linclust(int argc, const char **argv, const Command& command) {
     cmd.addVariable("FILTER", Parameters::isEqualDbtype(dbType, Parameters::DBTYPE_AMINO_ACIDS) ? "1" : NULL);
     cmd.addVariable("KMERMATCHER_PAR", par.createParameterString(par.kmermatcher).c_str());
     cmd.addVariable("VERBOSITY", par.createParameterString(par.onlyverbosity).c_str());
+    cmd.addVariable("AASTORE_INDEX_PAR", par.createParameterString({&par.PARAM_AASTORE_INDEX_MODE}, true).c_str());
     cmd.addVariable("VERBOSITYANDCOMPRESS", par.createParameterString(par.threadsandcompression).c_str());
 
     par.alphabetSize = alphabetSize;

@@ -2,6 +2,7 @@
 
 #include "AAStoreMemoryBudget.h"
 #include "Debug.h"
+#include "Parameters.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -360,7 +361,7 @@ aastore_memory::Budget automatic_storage_budget(
         const std::string& database, size_t computeThreads,
         uint64_t stageMemoryReserve, const std::string& recordStore = {},
         bool denseRecordIds = false, uint64_t recordSafetyReserve = 0,
-        const std::string& scoringStore = {}) {
+        const std::string& scoringStore = {}, bool includeDescriptions = true) {
     const MemoryAvailability memory = memory_availability();
     const uint64_t indexReserve = database.empty() || denseRecordIds || !scoringStore.empty()
         ? 0 : file_bytes(database + ".index");
@@ -385,7 +386,8 @@ aastore_memory::Budget automatic_storage_budget(
     } else {
         const std::filesystem::path path(recordStore);
         const uint64_t textBytes = aastore_memory::add_bytes(
-            file_bytes(path / "names.bin"), file_bytes(path / "descriptions.bin"));
+            file_bytes(path / "names.bin"),
+            includeDescriptions ? file_bytes(path / "descriptions.bin") : 0);
         const uint64_t metadataBytes = aastore_memory::add_bytes(
             file_bytes(path / "meta.bin"), aastore_memory::add_bytes(
                 file_bytes(path / "names.meta"), file_bytes(path / "descriptions.meta")));
@@ -494,12 +496,18 @@ void AAStoreTargetReader::associateDatabase(const std::string& database,
     std::filesystem::remove(database + ".aastore.ids");
 }
 
+aastore::IndexLoadMode AAStoreTargetReader::configuredIndexLoadMode() {
+    return Parameters::getInstance().aastoreIndexMode == "read"
+        ? aastore::IndexLoadMode::Read : aastore::IndexLoadMode::Mmap;
+}
+
 void AAStoreTargetReader::associateSubsetDatabase(
         const std::string& database, const std::string& store,
         std::vector<uint32_t> keys) {
     namespace fs = std::filesystem;
     std::sort(keys.begin(), keys.end());
     aastore::StoreOptions options;
+    options.index_load_mode = configuredIndexLoadMode();
     options.storage_mode = aastore::StorageMode::ByteRange;
     const std::string path = resolved_store_path(store);
     aastore::Store metadataStore(path, options);
@@ -553,6 +561,7 @@ void AAStoreTargetReader::open(
     recordsEnabled_ = false;
     recordsDenseIds_ = false;
     recordHeaderNeedsSpace_ = false;
+    headerDescriptionsEnabled_ = false;
     readOptions_ = readOptions;
 }
 
@@ -571,10 +580,19 @@ bool AAStoreTargetReader::openForScoring(
                                      false, 0, true);
 }
 
+bool AAStoreTargetReader::openForHeaders(
+        const std::string& database, size_t computeThreads,
+        uint64_t stageMemoryReserve, bool fullHeader) {
+    return openAssociated(database, computeThreads, stageMemoryReserve,
+                          true, UINT64_C(8) * 1024 * 1024 * 1024, false,
+                          true, fullHeader);
+}
+
 bool AAStoreTargetReader::openAssociated(
         const std::string& database, size_t computeThreads,
         uint64_t stageMemoryReserve, bool preferRecordFields,
-        uint64_t recordSafetyReserve, bool scoring) {
+        uint64_t recordSafetyReserve, bool scoring,
+        bool headersOnly, bool fullHeader) {
     const std::string path = associatedStorePath(database);
     if (path.empty()) return false;
 
@@ -625,9 +643,14 @@ bool AAStoreTargetReader::openAssociated(
             }
             if (!index.eof()) throw std::runtime_error("cannot read legacy AAStore sequence index");
             aastore::StoreOptions metadataOptions;
+            metadataOptions.index_load_mode = configuredIndexLoadMode();
             metadataOptions.storage_mode = aastore::StorageMode::ByteRange;
-            aastore::Store metadataStore(path, metadataOptions);
-            if (dense && count == metadataStore.size()) associateDatabase(database, path);
+            uint64_t storeCount;
+            {
+                aastore::Store metadataStore(path, metadataOptions);
+                storeCount = metadataStore.size();
+            }
+            if (dense && count == storeCount) associateDatabase(database, path);
             else {
                 if (dense) {
                     subsetKeys.resize(static_cast<size_t>(count));
@@ -637,16 +660,26 @@ bool AAStoreTargetReader::openAssociated(
             }
             Debug(Debug::INFO) << "Upgraded legacy AAStore association to explicit membership: " << database << "\n";
             return openAssociated(database, computeThreads, stageMemoryReserve,
-                                  preferRecordFields, recordSafetyReserve, scoring);
+                                  preferRecordFields, recordSafetyReserve, scoring,
+                                  headersOnly, fullHeader);
         }
     }
 
     const HeaderRecordsProof proof = preferRecordFields
         ? header_records_proof(database, path) : HeaderRecordsProof{};
-    const aastore_memory::Budget automaticBudget = automatic_storage_budget(
+    // Old raw separators can make the native accession span both fields.
+    const bool includeDescriptions = !headersOnly || fullHeader || !proof.insertHeaderSpace;
+    if (headersOnly && (!proof.present || !proof.denseIds)) {
+        throw std::runtime_error("AAStore TSV export needs certified dense record IDs");
+    }
+    aastore_memory::Budget automaticBudget = automatic_storage_budget(
         database, computeThreads, stageMemoryReserve,
         proof.present ? path : std::string(), proof.denseIds, recordSafetyReserve,
-        scoring ? path : std::string());
+        scoring ? path : std::string(), includeDescriptions);
+    if (headersOnly) {
+        automaticBudget.cacheBytes = 0;
+        automaticBudget.pageCacheReserve = automaticBudget.remainingPool;
+    }
     if (subsetView) {
         // Probe available memory before allocating members so their bytes are
         // reserved once in the budget, rather than also reducing availability.
@@ -669,6 +702,7 @@ bool AAStoreTargetReader::openAssociated(
     const uint64_t selectedBytes =
         std::min(automaticBudget.cacheBytes, packedBytes);
     aastore::StoreOptions options;
+    options.index_load_mode = configuredIndexLoadMode();
     size_t cacheBytes = 0;
     if (packedBytes != 0 && selectedBytes >= packedBytes) {
         options.storage_mode = aastore::StorageMode::FullMemory;
@@ -683,7 +717,7 @@ bool AAStoreTargetReader::openAssociated(
     options.threads = 8;
     options.cache_bytes = cacheBytes;
     options.resident_names = proof.present && automaticBudget.residentText;
-    options.resident_descriptions = options.resident_names;
+    options.resident_descriptions = options.resident_names && includeDescriptions;
     if (proof.present) {
         Debug(Debug::INFO) << "AAStore record allocation planned: resident_text_columns="
             << (options.resident_names ? 1 : 0)
@@ -715,6 +749,7 @@ bool AAStoreTargetReader::openAssociated(
     recordsEnabled_ = proof.present;
     recordsDenseIds_ = proof.denseIds;
     recordHeaderNeedsSpace_ = proof.insertHeaderSpace;
+    headerDescriptionsEnabled_ = includeDescriptions;
     if (recordsEnabled_) {
         if (store_->size() != proof.records || !store_->has_names() || !store_->has_descriptions()) {
             throw std::runtime_error("certified AAStore record columns differ from sequence metadata");
@@ -727,12 +762,13 @@ bool AAStoreTargetReader::openAssociated(
 
     Debug(Debug::INFO)
         << "AAStore target enabled: " << path
-        << " io_backend=io_uring"
+        << " io_backend=" << (headersOnly ? "pread" : "io_uring")
         << " threads=1"
         << " merge_gap=" << readOptions_.merge_gap_bytes
         << " max_range=" << readOptions_.max_merged_range_bytes
         << " cache_bytes=" << cacheBytes
         << " storage_mode=" << storage_mode_name(options.storage_mode)
+        << " index_load_mode=" << (store_->index_load_mode() == aastore::IndexLoadMode::Read ? "read" : "mmap")
         << " memory_limit=" << automaticBudget.memoryLimit
         << " memory_available=" << automaticBudget.memoryAvailable
         << " memory_reserve=" << automaticBudget.memoryReserve
@@ -767,6 +803,31 @@ bool AAStoreTargetReader::hasNativeRecordHeaders(const std::string& database) {
 bool AAStoreTargetReader::recordsEnabled() const noexcept { return recordsEnabled_; }
 
 bool AAStoreTargetReader::recordsDenseIds() const noexcept { return recordsDenseIds_; }
+
+bool AAStoreTargetReader::headerDescriptionsEnabled() const noexcept {
+    return headerDescriptionsEnabled_;
+}
+
+void AAStoreTargetReader::getHeaderFields(
+        size_t key, std::string& name, std::string& description) const {
+    if (!recordsEnabled_ || !recordsDenseIds_) {
+        throw std::logic_error("AAStore TSV headers require certified dense record IDs");
+    }
+    aastore::ReadOptions options;
+    options.threads = 1;
+    options.io_backend = aastore::IoBackend::Pread;
+    const auto fields = headerDescriptionsEnabled_
+        ? aastore::RecordFields::Name | aastore::RecordFields::Description
+        : aastore::RecordFields::Name;
+    const auto records = store_->batch_get_records({key}, fields, options);
+    const std::string_view recordName = records.name_view(0);
+    if (recordName.empty()) name.clear();
+    else name.assign(recordName.data(), recordName.size());
+    const std::string_view recordDescription = headerDescriptionsEnabled_
+        ? records.description_view(0) : std::string_view();
+    if (recordDescription.empty()) description.clear();
+    else description.assign(recordDescription.data(), recordDescription.size());
+}
 
 std::string_view AAStoreTargetReader::headerSeparator(std::string_view description) const noexcept {
     return recordHeaderNeedsSpace_ && !description.empty() ? std::string_view(" ") : std::string_view();

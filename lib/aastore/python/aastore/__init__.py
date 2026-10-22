@@ -6,6 +6,7 @@ from ._aastore import (
     BatchStats,
     BuildOptions,
     BuildStats,
+    IndexLoadMode,
     IoBackend,
     ReadOptions,
     RecordBatch,
@@ -20,7 +21,7 @@ from ._aastore import (
 )
 
 __all__ = [
-    "Batch", "BatchStats", "BuildOptions", "BuildStats", "IoBackend",
+    "Batch", "BatchStats", "BuildOptions", "BuildStats", "IndexLoadMode", "IoBackend",
     "ReadOptions", "RecordBatch", "RecordFields", "StorageMode",
     "Store", "StoreOptions", "TextBatch", "TextBatchStats", "build_fasta",
     "__version__",

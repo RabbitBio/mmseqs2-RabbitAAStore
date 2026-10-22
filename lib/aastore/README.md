@@ -181,8 +181,18 @@ with aastore.Store("proteins.aastore", opening) as store:
 ```
 
 C++ 使用 `StoreOptions` 中的同名字段。启用后，打开库时将对应列的完整正文读入
-`Store` 持有的内存缓冲，后续批读直接复制该缓冲，不再读取正文文件；索引仍使用只读映射。
+`Store` 持有的内存缓冲，后续批读直接复制该缓冲，不再读取正文文件。
 `resident_text_bytes` 表示已载入的文本字节数，不含索引，也不是进程实时 RSS。
+
+索引加载由 `index_load_mode` 独立控制，默认 `IndexLoadMode.Mmap` 使用只读映射。
+选择 `Read` 会在打开时将 `meta.bin` 和存在的 `names.meta`、`descriptions.meta`
+完整读入 `Store` 持有的内存；序列和文本正文仍按上面的选项读取：
+
+```python
+opening = aastore.StoreOptions(index_load_mode=aastore.IndexLoadMode.Read)
+with aastore.Store("proteins.aastore", opening) as store:
+    print(store.index_load_mode)
+```
 
 每次读取的线程数由 `ReadOptions.threads` 设置，例如 `aastore.ReadOptions(threads=4)`。
 默认的 `IoBackend.Auto` 在构建及运行环境允许时使用 io_uring，后端初始化不可用时

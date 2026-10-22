@@ -205,6 +205,7 @@ Parameters::Parameters():
         PARAM_CREATEDB_MODE(PARAM_CREATEDB_MODE_ID, "--createdb-mode", "Createdb mode", "Createdb mode 0: copy data, 1: soft link data and write new index (works only with single line fasta/q) 2: GPU compatible db", typeid(int), (void *) &createdbMode, "^[0-2]{1}$"),
         PARAM_SHUFFLE(PARAM_SHUFFLE_ID, "--shuffle", "Shuffle input database", "Shuffle input database", typeid(bool), (void *) &shuffleDatabase, ""),
         PARAM_AASTORE(PARAM_AASTORE_ID, "--aastore", "Use AAStore", "Automatically build and use AAStore sequence storage (amino-acid databases only)", typeid(bool), (void *) &aastore, ""),
+        PARAM_AASTORE_INDEX_MODE(PARAM_AASTORE_INDEX_MODE_ID, "--aastore-index-mode", "AAStore index mode", "Load AAStore sequence and text indexes with mmap or read", typeid(std::string), (void *) &aastoreIndexMode, "^(mmap|read)$"),
         PARAM_AASTORE_REPRESENTATIVE_ONLY(PARAM_AASTORE_REPRESENTATIVE_ONLY_ID, "--representative-only", "Representatives only", "Directly export representative records instead of clustered member FASTA", typeid(bool), (void *) &aastoreRepresentativeOnly, ""),
         PARAM_WRITE_LOOKUP(PARAM_WRITE_LOOKUP_ID, "--write-lookup", "Write lookup file", "write .lookup file containing mapping from internal id, fasta id and file number", typeid(int), (void *) &writeLookup, "^[0-1]{1}", MMseqsParameter::COMMAND_EXPERT),
         PARAM_USE_HEADER_FILE(PARAM_USE_HEADER_FILE_ID, "--use-header-file", "Use header DB", "use the sequence header DB instead of the body to map the entry keys", typeid(bool), (void *) &useHeaderFile, ""),
@@ -416,6 +417,7 @@ Parameters::Parameters():
     align.push_back(&PARAM_ZDROP);
     align.push_back(&PARAM_THREADS);
     align.push_back(&PARAM_AASTORE);
+    align.push_back(&PARAM_AASTORE_INDEX_MODE);
     align.push_back(&PARAM_COMPRESSED);
     align.push_back(&PARAM_V);
 
@@ -518,6 +520,7 @@ Parameters::Parameters():
     rescorediagonal.push_back(&PARAM_PRELOAD_MODE);
     rescorediagonal.push_back(&PARAM_THREADS);
     rescorediagonal.push_back(&PARAM_AASTORE);
+    rescorediagonal.push_back(&PARAM_AASTORE_INDEX_MODE);
     rescorediagonal.push_back(&PARAM_COMPRESSED);
     rescorediagonal.push_back(&PARAM_V);
 
@@ -598,6 +601,7 @@ Parameters::Parameters():
     createtsv.push_back(&PARAM_DB_OUTPUT);
     createtsv.push_back(&PARAM_THREADS);
     createtsv.push_back(&PARAM_AASTORE);
+    createtsv.push_back(&PARAM_AASTORE_INDEX_MODE);
     createtsv.push_back(&PARAM_COMPRESSED);
     createtsv.push_back(&PARAM_V);
 
@@ -849,6 +853,7 @@ Parameters::Parameters():
     createdb.push_back(&PARAM_DB_TYPE);
     createdb.push_back(&PARAM_SHUFFLE);
     createdb.push_back(&PARAM_AASTORE);
+    createdb.push_back(&PARAM_AASTORE_INDEX_MODE);
     createdb.push_back(&PARAM_CREATEDB_MODE);
     createdb.push_back(&PARAM_WRITE_LOOKUP);
     createdb.push_back(&PARAM_ID_OFFSET);
@@ -911,6 +916,7 @@ Parameters::Parameters():
 
     // Direct, records-based AAStore cluster FASTA export.
     aastoreexportfasta.push_back(&PARAM_AASTORE);
+    aastoreexportfasta.push_back(&PARAM_AASTORE_INDEX_MODE);
     aastoreexportfasta.push_back(&PARAM_AASTORE_REPRESENTATIVE_ONLY);
     aastoreexportfasta.push_back(&PARAM_MIN_SEQUENCES);
     aastoreexportfasta.push_back(&PARAM_MAX_SEQUENCES);
@@ -1197,6 +1203,7 @@ Parameters::Parameters():
 
     // createsubdb
     createsubdb.push_back(&PARAM_SUBDB_MODE);
+    createsubdb.push_back(&PARAM_AASTORE_INDEX_MODE);
     createsubdb.push_back(&PARAM_ID_MODE);
     createsubdb.push_back(&PARAM_V);
 
@@ -1920,6 +1927,11 @@ void Parameters::parseParameters(int argc, const char *pargv[], const Command &c
                         if (Util::startWith("b64:", val)) {
                             val = base64_decode(val.c_str() + 4, val.size() - 4);
                         }
+                        if (par[parIdx]->uniqid == PARAM_AASTORE_INDEX_MODE.uniqid &&
+                            val != "mmap" && val != "read") {
+                            Debug(Debug::ERROR) << "--aastore-index-mode must be mmap or read\n";
+                            EXIT(EXIT_FAILURE);
+                        }
                         std::string* currVal = (std::string*)par[parIdx]->value;
                         currVal->assign(val);
                         par[parIdx]->wasSet = true;
@@ -2484,6 +2496,7 @@ void Parameters::setDefaults() {
     shuffleDatabase = true;
     aastore = false;
     aastoreRepresentativeOnly = false;
+    aastoreIndexMode = "mmap";
     writeLookup = true;
 
     // format alignment
