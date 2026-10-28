@@ -20,8 +20,8 @@ class _PybindEnum:
 
 class StorageMode(_PybindEnum):
     __members__: ClassVar[Dict[str, StorageMode]]
-    ByteRange: ClassVar[StorageMode]
-    PrefixMemory: ClassVar[StorageMode]
+    NoMemory: ClassVar[StorageMode]
+    PartialMemory: ClassVar[StorageMode]
     FullMemory: ClassVar[StorageMode]
 
 class IndexLoadMode(_PybindEnum):
@@ -55,14 +55,12 @@ class BuildOptions:
     def validate(self) -> None: ...
 
 class StoreOptions:
-    storage_mode: StorageMode
-    cache_bytes: int
+    preload_bytes: int
     threads: int
     resident_names: bool
     resident_descriptions: bool
     index_load_mode: IndexLoadMode
-    def __init__(self, *, storage_mode: StorageMode = StorageMode.ByteRange,
-                 cache_bytes: int = 0, threads: int = 8,
+    def __init__(self, *, preload_bytes: int = 0, threads: int = 8,
                  resident_names: bool = False, resident_descriptions: bool = False,
                  index_load_mode: IndexLoadMode = IndexLoadMode.Mmap) -> None: ...
     def validate(self) -> None: ...
@@ -309,6 +307,8 @@ class Store:
     @property
     def decode_kernel_name(self) -> str: ...
     def sequence_length(self, id: int) -> int: ...
+    def name_length(self, id: int) -> int: ...
+    def description_length(self, id: int) -> int: ...
     @overload
     def get(self, id: int, options: ReadOptions = ...) -> Batch: ...
     @overload

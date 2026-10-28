@@ -9,7 +9,7 @@ function(aastore_test_cache_set path name value)
         string(FIND "${value}" "]${delimiter}]" closing)
     endwhile()
     file(APPEND "${path}"
-        "set(${name} [${delimiter}[${value}]${delimiter}] CACHE STRING \"AAStore SDK consumer test\" FORCE)\n")
+        "set(${name} [${delimiter}[${value}]${delimiter}] CACHE STRING \"RabbitAAStore SDK consumer test\" FORCE)\n")
 endfunction()
 
 function(aastore_write_consumer_toolchain_cache path)
@@ -71,6 +71,8 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
     return()
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/test_helpers.cmake")
+
 foreach(required AASTORE_BUILD_DIR AASTORE_SOURCE_DIR AASTORE_TEST_TOOLCHAIN_CACHE
                  AASTORE_TEST_GENERATOR AASTORE_TEST_CTEST AASTORE_TEST_PACKAGE_DIR)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
@@ -82,15 +84,6 @@ if(NOT EXISTS "${AASTORE_TEST_TOOLCHAIN_CACHE}")
     message(FATAL_ERROR "Missing SDK test toolchain cache: ${AASTORE_TEST_TOOLCHAIN_CACHE}")
 endif()
 include("${AASTORE_TEST_TOOLCHAIN_CACHE}")
-
-function(run_checked)
-    execute_process(COMMAND ${ARGV}
-        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
-    if(NOT result EQUAL 0)
-        string(JOIN " " command ${ARGV})
-        message(FATAL_ERROR "${command}\n${output}\n${error}")
-    endif()
-endfunction()
 
 set(test_root "${AASTORE_BUILD_DIR}/install-consumer-${AASTORE_TEST_CONFIG}")
 set(stage "${test_root}/stage")
@@ -111,7 +104,7 @@ set(config_args)
 if(NOT "${AASTORE_TEST_CONFIG}" STREQUAL "")
     list(APPEND config_args --config "${AASTORE_TEST_CONFIG}")
 endif()
-run_checked("${CMAKE_COMMAND}" --install "${AASTORE_BUILD_DIR}"
+aastore_test_run_checked("${CMAKE_COMMAND}" --install "${AASTORE_BUILD_DIR}"
     --prefix "${stage}" --component Development ${config_args})
 file(RENAME "${stage}" "${relocated}")
 
@@ -146,11 +139,11 @@ if(DEFINED AASTORE_TEST_URING_INCLUDE_DIR
     aastore_test_cache_set("${consumer_cache}" AAStoreUring_LIBRARY
         "${AASTORE_TEST_URING_LIBRARY}")
 endif()
-run_checked("${CMAKE_COMMAND}"
+aastore_test_run_checked("${CMAKE_COMMAND}"
     -C "${consumer_cache}"
     -S "${AASTORE_SOURCE_DIR}/tests/install_consumer" -B "${consumer_build}"
     ${generator_args})
-run_checked("${CMAKE_COMMAND}" --build "${consumer_build}" ${config_args}
+aastore_test_run_checked("${CMAKE_COMMAND}" --build "${consumer_build}" ${config_args}
     --parallel 2)
 
 if(AASTORE_TEST_CROSSCOMPILING AND NOT CMAKE_CROSSCOMPILING_EMULATOR)

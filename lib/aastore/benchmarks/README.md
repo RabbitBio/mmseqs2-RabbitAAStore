@@ -1,168 +1,209 @@
-# Cold Random-Access Pilot
+# RabbitAAStore benchmarks
 
-This suite measures AAStore only. The initial publication dataset is the full
-UniRef100 2026_03 FASTA, not NR and not a smaller database made from sampled records.
-Record sampling changes the workload, not the underlying database.
+This directory provides a C++ sequence-read benchmark and a Python runner for
+comparing memory residency, thread counts, and I/O backends. Both use an existing
+RabbitAAStore database; database construction and text-column retrieval are
+outside the measured workload.
 
-## Initial Matrix
+## Build
 
-| Variable | Initial values |
-| --- | --- |
-| Storage | FullMemory; NonFull with 0%, 25%, 50%, 75% resident packed prefixes |
-| Requested records | 1%, 5%, 10% of the full database |
-| AAStore internal threads | 1, 4, 16, 64 |
-| Repeats | 1 for the pilot; use at least 3 for final measurements |
-| Output batch target | 64 MiB decoded bytes, including one NUL per record |
-| NonFull backend | Explicit io_uring; no silent fallback |
-| I/O buffer setting | 16 MiB per batch call, shared among rings |
-| Queue depth setting | 64, subject to the library's range and buffer limits |
-
-The caller invokes `get()` serially with bounded batches in both modes.
-AAStore distributes work internally using `ReadOptions::threads`.
-FullMemory takes the resident decode path, bypassing range planning and disk reads
-during fetch. NonFull plans ranges and reads/decodes using its internal workers.
-The same thread setting applies to FullMemory and PrefixMemory initial preload.
-No outer pool is added to multiply the configured thread count.
-
-This matrix has 60 cases per repeat: four NonFull budgets plus one FullMemory
-case, crossed with three request fractions and four thread counts. Prefix budget
-is `floor(packed_bytes * prefix_percent / 100)`, passed using `--memory-bytes`.
-Zero budget selects ByteRange; a positive budget selects PrefixMemory. FullMemory
-is the separate 100% resident case, not repeated for every prefix setting.
-Packed byte percentage is not record-count percentage or a promised hit rate.
-The runner records requested percentage, exact budget, actual resident bytes and
-request/residue hit counts. Paired correctness checks also span prefix budgets.
-Hit/miss counters describe NonFull prefix routing; FullMemory takes a direct
-resident decode path and does not populate those counters.
-
-`--sample-percent` selects `max(1, floor(N * percent / 100))` distinct IDs
-(zero for an empty store), then shuffles their order. The same seed, percentage,
-and binary produce identical ID order across modes and thread counts. Selection
-uses O(sample size) memory. Case execution order is also seeded and shuffled.
-A sequence exceeding the batch target is processed alone, never truncated.
-The output batch target is separate from the compressed I/O buffer setting;
-neither is a hard bound on total process memory.
-
-## Cold Definition
-
-Every case uses a fresh process and `--rounds 1 --drop-cache`. The benchmark
-syncs and evicts **only `packed.bin` and `meta.bin`**, then verifies zero resident
-pages with `mincore` before opening the Store. Failure to evict is a failed case,
-not a warm measurement. Other workloads must not access the same store.
-This is a cold file-page-cache start, not a hardware/controller cache flush.
-Pages can naturally warm across batches within a case; they are not evicted
-between batches. OS code pages and unrelated files are not flushed.
-
-## Metrics
-
-The benchmark explicitly enables `ReadOptions::collect_diagnostics` and reports
-`collect_diagnostics=1`. The library leaves coverage/overread, merge and prefix
-residue counts, detailed read timings and submit/wait API counters off by default;
-basic read-byte, range, request, hit/miss and SQE/CQE counts remain available.
-Disabling diagnostics also skips the parallel coverage-statistics pass.
-Benchmark fetch timings include the enabled diagnostic overhead.
-
-- `open_ms`: Store construction, including FullMemory or PrefixMemory preload.
-- `preload_ms`: the packed-data preload portion of opening a PrefixMemory or
-  FullMemory store; it is already included in `open_ms`.
-- `fetch_ms`: sum of timed AAStore calls, excluding request generation and hashes.
-- `fetch_user_ms`, `fetch_system_ms`: process CPU time spent in the fetch calls.
-- `service_ms`: `open_ms + fetch_ms`, the primary cold service comparison.
-- `end_to_end_ms`: also includes trace preparation, output consumption and harness
-  overhead; excludes the cache-eviction setup and process startup.
-- `prepare_ms`, `consume_ms`: trace preparation and output validation separately.
-- `peak_rss_kib`: whole-process high-water RSS, including benchmark allocations;
-  **not** machine memory usage or kernel page-cache size.
-- `resident_bytes`: AAStore's resident packed bytes, excluding metadata.
-- `open_storage_read_bytes`, `fetch_storage_read_bytes`: Linux process-attributed
-  device reads from `/proc/self/io` `read_bytes` deltas, including attributable
-  readahead; distinct from logical AAStore `read_bytes`, range counts, and
-  whole-device counters.
-- `trace_hash_fnv1a64`, `output_hash_fnv1a64`: order-sensitive noncryptographic
-  checks, including ID, length and every output byte. These must match paired cases.
-
-Counts and timings are summed across batches (and rounds for legacy warm runs).
-Worker counts, queue depth and maximum range size report maxima, not sums.
-The output digest describes one round; repeated rounds must match.
-Record inspection and batch sizing touch metadata before fetch in both modes;
-the experiment starts cold **before open**, not immediately before every fetch.
-
-## Run
+Run from the repository root:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAASTORE_BUILD_BENCHMARKS=ON
-cmake --build build --target aastore_bench aastore_build -j 8
-python3 benchmarks/run_cold_matrix.py /path/to/full/store /path/to/new/results \
-  --label UniRef100_2026_03 --percents 1 5 10 --threads 1 4 16 64 \
-  --prefix-percents 0 25 50 75
+cmake --build build --target aastore_bench aastore_build -j 4
 ```
 
-The runner records the binary SHA-256, input file sizes/mtimes, environment,
-randomized case order, exact commands, raw logs, and `results.csv`. It stops on
-timeouts, insufficient estimated available memory, noncold input, backend errors,
-or mismatched paired outputs. `COMPLETE` appears only after every case succeeds.
-The memory guard is conservative, not a cgroup limit or a guarantee against OOM.
-Do not run the suite concurrently with dataset downloads/builds or other storage
-benchmarks when collecting publishable measurements.
-
-For a quick generated-data regression (not a performance result):
+If needed, create an input database before benchmarking:
 
 ```sh
-python3 tests/benchmark_test.py build/aastore_build build/aastore_bench --uring
+./build/aastore_build proteins.fa proteins.aastore --sequences-only
 ```
 
-Use `--backend pread` for a separate matched backend experiment. Omitting
-`--prefix-percents` retains the two-case FullMemory/zero-prefix comparison.
-The runner defaults to smaller request fractions for quick trials; the command
-above explicitly selects the current publication pilot. Batch-size sweeps and
-additional repeats can follow the pilot.
+The io_uring backend requires usable liburing development files at build time
+and kernel support at runtime. Explicit `uring` runs fail if the backend is
+unavailable; `auto` permits fallback to `pread`.
 
-## Individual Benchmark Runs
+## Individual runs
 
-Run these commands from the repository root after building `aastore_bench`.
-They cover random reads, a 512 MiB packed prefix, FullMemory, and the dedicated
-sequential read interface:
+The following commands use an existing database. Replace `proteins.aastore`
+with its path. These examples measure random requests, a 512 MiB preload
+budget, full residency, and the consecutive-read interface:
 
 ```sh
-./build/aastore_bench /path/to/original/store \
-  --requests 1000000 --rounds 1 --threads 8 --drop-cache \
-  --io-backend uring --queue-depth 64 \
-  --io-buffer-bytes 16777216
+./build/aastore_bench proteins.aastore \
+  --requests 1000000 --seed 12345 --rounds 1 --threads 8 --drop-cache \
+  --io-backend uring --queue-depth 64 --io-buffer-bytes 16777216
 
-./build/aastore_bench /path/to/original/store \
+./build/aastore_bench proteins.aastore \
   --requests 1000000 --rounds 1 --threads 8 --drop-cache --memory-mb 512
 
-./build/aastore_bench /path/to/original/store \
+./build/aastore_bench proteins.aastore \
   --requests 1000000 --rounds 1 --threads 8 --drop-cache --memory-mb -1
 
-./build/aastore_bench /path/to/original/store \
-  --requests 1000000 --fast-sequential --threads 8
+./build/aastore_bench proteins.aastore \
+  --requests 1000000 --fast-sequential --rounds 1 --threads 8 --drop-cache
 ```
 
-`--memory-mb 0` selects ByteRange, a positive value selects PrefixMemory, and
-`-1` selects FullMemory. `--full-memory` is an alias for `--memory-mb -1`.
-A positive budget preloads a fixed packed prefix; reads do not change the
-resident region. `--memory-bytes N` selects an exact prefix budget, with zero
-selecting ByteRange; it cannot be combined with `--memory-mb` or `--full-memory`.
+`--requests` generates random IDs with replacement unless a sequential mode is
+selected. The default seed is `12345`. To sample without replacement and limit
+batch output size, use:
 
-`--io-backend auto` defaults to trying io_uring with fallback to pread when
-unavailable. Choose `pread` for a matched backend comparison or explicit `uring`
-to fail if unavailable. `--threads` sets the internal worker budget, and
-`--queue-depth` sets the per-ring target depth (default 64).
-`--io-buffer-bytes` controls the shared range-buffer budget (default 16 MiB),
-which can reduce the actual queue depth.
+```sh
+./build/aastore_bench proteins.aastore \
+  --sample-percent 1 --seed 12345 --batch-bytes 67108864 \
+  --rounds 1 --threads 8 --io-backend pread --drop-cache
+```
 
-Range planning uses `--merge-gap` (default 4096 bytes) and `--max-range` (default
-16384 bytes); `--max-exact-range` limits merges without extra reads (default
-1048576 bytes). Compare merge settings using the same workload and seed.
-Inspect `ranges`, `read_bytes`, and `overread_bytes` to understand the planner's
-decisions. `--fast-sequential` instead calls `sequential_get()` over a prefix
-of consecutive IDs; `--requests` must fit within the store. It cannot be
-combined with `--batch-bytes`.
+`--sample-percent P` selects `max(1, floor(N * P / 100))` distinct IDs, or zero
+for an empty database, then shuffles them. It cannot be combined with
+`--requests`, sequential modes, or `--ids-file`. For a fixed database, binary,
+seed, and percentage, the ID order is identical across memory and thread
+configurations. Sampling uses memory proportional to the number of selected IDs.
 
-For bounded random batches and sampling without replacement, use
-`--sample-percent P --batch-bytes N` as described in the matrix above.
-`--sample-percent` cannot be combined with `--requests`, sequential modes, or
-`--ids-file`. Fetch metrics sum all batches and rounds; preload happens once.
-`--drop-cache` requires `--rounds 1` and a fresh process per cold repeat,
-following the same file-cache eviction and validation rules described above.
+`--batch-bytes` targets decoded output bytes, including one NUL per record.
+A sequence exceeding the target is processed alone and is never truncated.
+Without this option, all requests are passed in one batch. The batch target and
+the encoded I/O buffer budget are separate settings; neither limits total
+process memory.
+
+### Memory and I/O settings
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--memory-mb` | `0` | Sequence preload budget in MiB; `0` disables preloading and `-1` requests full residency. |
+| `--memory-bytes` | Unset | Exact sequence preload budget in bytes; zero disables preloading. |
+| `--threads` | `8` | Internal worker budget for reads and initial sequence preloading. |
+| `--io-backend` | `auto` | `auto`, `pread`, or `uring`. |
+| `--queue-depth` | `64` | Target maximum outstanding requests per io_uring ring. |
+| `--io-buffer-bytes` | `16777216` | Shared io_uring range-buffer budget; may reduce actual queue depth. |
+| `--merge-gap` | `4096` | Maximum gap in bytes that range planning may bridge. |
+| `--max-range` | `16384` | Maximum merged range size when bridging a nonzero gap. |
+| `--max-exact-range` | `1048576` | Maximum range size for overlapping or adjacent merges. |
+
+`--full-memory` is an alias for `--memory-mb -1`; both pass `UINT64_MAX` as
+`StoreOptions::preload_bytes`. `--memory-bytes` cannot be combined with
+`--memory-mb` or `--full-memory`. All forms pass a budget to the library, which
+selects `NoMemory` for zero, `PartialMemory` for a positive budget below
+`packed_bytes`, and `FullMemory` when a positive budget covers all encoded data.
+Only the available encoded bytes are allocated when the budget is larger.
+A partial prefix is fixed during a run; reads do not replace the resident
+region. Indexes use the library's default read-only mmap mode.
+
+The budget covers encoded sequences only. It excludes indexes, text columns,
+decoded output, and I/O buffers. `NoMemory` means no explicit sequence preloading;
+it does not disable the operating system page cache.
+
+The caller issues batch reads serially, and RabbitAAStore distributes work
+internally. Full residency decodes directly from memory without disk range
+planning during retrieval. Partial residency decodes resident requests from
+memory and plans disk reads for the remaining requests.
+
+`--fast-sequential` calls `sequential_get()` for a prefix of consecutive IDs.
+Its request count must fit within the database, and it cannot be combined with
+`--batch-bytes`. The consecutive-read API uses `pread`.
+
+## Cold-start conditions
+
+`--drop-cache` requires `--rounds 1`. Each cold repeat must use a fresh process.
+Before opening the database, the benchmark synchronizes and requests eviction
+of **`packed.bin` and `meta.bin` only**, then uses `mincore` to verify that no
+pages from either file remain resident. Failure to evict causes the run to fail.
+Other workloads must not access the same database during measurement.
+
+This establishes a cold file-page-cache start; it does not flush hardware or
+controller caches, executable pages, or unrelated files. Pages can become
+resident during opening, request preparation, and earlier batches. They are
+not evicted again before each retrieval call.
+
+## Timing and statistics
+
+The two main timing fields are:
+
+| Field | Scope |
+| --- | --- |
+| `fetch_ms` | Sum of timed library read calls; excludes opening, request generation, and output checks. |
+| `service_ms` | `open_ms + fetch_ms`; includes opening and any sequence preloading. |
+
+The benchmark enables `ReadOptions::collect_diagnostics`, so retrieval timings
+include diagnostic collection overhead. The library disables these detailed
+diagnostics by default. This distinction matters when comparing results from
+other harnesses or reproducing a published experiment.
+
+Additional fields include:
+
+- `open_ms`: database opening, including sequence preloading.
+- `preload_ms`: sequence preloading alone; already included in `open_ms`.
+- `prepare_ms`: ID generation, metadata inspection, and batch preparation.
+- `consume_ms`: output consumption, length checks, and hashes, outside the
+  timed read calls.
+- `end_to_end_ms`: opening, preparation, retrieval, output checks, and harness
+  overhead; excludes cache eviction and process startup.
+- `fetch_user_ms` and `fetch_system_ms`: process CPU time during read calls.
+- `peak_rss_kib`: peak process RSS, including harness allocations; excludes
+  unrelated system memory and the kernel's page cache.
+- `resident_bytes`: resident encoded sequence bytes, excluding metadata.
+- `preload_bytes`: requested encoded-sequence preload budget, which can exceed
+  the actual resident bytes.
+- `storage_mode`: automatically selected `no_memory`, `partial_memory`, or
+  `full_memory`.
+- `open_storage_read_bytes` and `fetch_storage_read_bytes`: Linux
+  `/proc/self/io` device-read deltas, including attributable readahead. These
+  differ from logical library `read_bytes` and whole-device counters.
+- `trace_hash_fnv1a64`: order-sensitive hash of requested IDs.
+- `output_hash_fnv1a64`: order-sensitive hash of IDs, lengths, and decoded bytes.
+
+Hashes are noncryptographic consistency checks. The matrix runner requires them
+to match across paired configurations. Counts and timings are summed across
+batches and, for warm multi-round runs, across rounds. Worker counts, queue
+depth, and maximum range size report maxima. Output hashes describe one round;
+subsequent rounds must match it.
+
+## Matrix runner
+
+For example, this command runs 60 cases: five residency configurations,
+three sampling percentages, and four thread counts:
+
+```sh
+python3 benchmarks/run_cold_matrix.py proteins.aastore results/cold-matrix \
+  --label MyDataset --percents 1 5 10 --threads 1 4 16 64 \
+  --prefix-percents 0 25 50 75 --backend uring --seed 12345
+```
+
+Use a new output directory. The runner adds a full-residency case to the
+requested prefix percentages. Prefix budgets are
+`floor(packed_bytes * percentage / 100)`: they represent encoded bytes, not
+record fractions or guaranteed hit rates. Zero selects `NoMemory`; a positive
+budget below the encoded data size selects `PartialMemory`. A positive budget
+covering all encoded bytes selects `FullMemory`. For an empty encoded sequence
+file, a zero budget still selects `NoMemory`; the full-residency request uses a
+positive budget and reports `FullMemory`.
+
+Without explicit options, the runner uses sampling percentages `0.01` and `0.1`,
+thread counts `1`, `8`, and `64`, a zero-byte prefix plus full residency, one
+repeat, seed `12345`, a 64 MiB decoded batch target, a 16 MiB I/O buffer budget,
+queue depth `64`, explicit `uring`, and a 1,800-second timeout per case. Use
+`--backend pread` for a matched backend experiment and `--repeats` to measure
+run-to-run variation. Each repeat uses a new seed; paired configurations within
+that repeat share the same requests. Case order is shuffled reproducibly.
+
+The runner saves `manifest.json`, the binary SHA-256, input file sizes and
+modification times, environment information, exact commands, raw logs, and
+`results.csv`. It stops on timeouts, an insufficient estimated memory budget,
+noncold input, backend errors, or inconsistent paired outputs. `COMPLETE` is
+written only after every case succeeds. The memory estimate is a preliminary
+check, not an enforced memory limit or a guarantee against exhaustion.
+
+For reliable timings, avoid concurrent database construction, downloads, or
+other storage benchmarks. Full-memory runs also require enough available RAM
+to retain the encoded sequence file and benchmark allocations.
+
+A separate regression checks the harness on small generated data:
+
+```sh
+python3 tests/benchmark_test.py build/aastore_build build/aastore_bench
+```
+
+Add `--uring` to exercise that backend when it is available. This regression
+checks correctness and argument handling; it does not produce performance
+results for a publication dataset.

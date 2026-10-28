@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
         }
         std::cout << "示例完成，数据库保留在 " << database.string() << '\n';
     } catch (const std::exception& error) {
-        std::cerr << "AAStore example: " << error.what() << '\n';
+        std::cerr << "RabbitAAStore example: " << error.what() << '\n';
         return 1;
     }
 }

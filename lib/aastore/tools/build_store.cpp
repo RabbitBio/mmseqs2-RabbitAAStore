@@ -1,4 +1,4 @@
-// 文件职责：提供 FASTA 转 AAStore 数据库的命令行入口。
+// 文件职责：提供 FASTA 转 RabbitAAStore 数据库的命令行入口。
 // 解析路径、线程和文本列开关，调用通用建库接口并报告耗时与输出规模。
 #include "aastore/store.hpp"
 

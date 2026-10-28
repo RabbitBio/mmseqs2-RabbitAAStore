@@ -1,4 +1,4 @@
-"""Verify automatic AAStore construction, ID order, and workflow propagation."""
+"""Verify automatic RabbitAAStore construction, ID order, and workflow propagation."""
 
 import argparse
 import gzip
@@ -124,7 +124,7 @@ def main():
                               '--dbtype', '1', '--aastore', '--threads', '4', '-v', '0'])
     compare_store('boundary', root / 'boundary')
 
-    # Rebuilding createdb must refresh an old local AAStore, not retain stale IDs.
+    # Rebuilding createdb must refresh an old local RabbitAAStore, not retain stale IDs.
     replacement = root / 'replacement.fa'
     replacement.write_text('>new\nWQWQWACDEFG\n>another\nLLLLM*X-\n')
     rebuilt = root / 'rebuilt'
@@ -139,7 +139,7 @@ def main():
     log = run('refresh_stale_store', [binary, 'linclust', rebuilt,
               root / 'refresh_result', root / 'refresh_tmp', '--threads', '4',
               '--aastore', '-v', '3'])
-    check('stale_local_store_rebuilt', 'Building AAStore' in log)
+    check('stale_local_store_rebuilt', 'Building RabbitAAStore' in log)
     compare_store('refreshed', rebuilt)
 
     for label, options in (
@@ -182,7 +182,7 @@ def main():
             baseline = value
         check('direct_' + label + '_results', value == baseline)
         check('direct_' + label + '_reader',
-              ('AAStore target enabled:' in log) == enabled)
+              ('RabbitAAStore target enabled:' in log) == enabled)
         if enabled:
             commands = [shlex.split(line) for line in log.splitlines()
                         if line.startswith(('rescorediagonal ', 'align '))]
@@ -215,7 +215,7 @@ def main():
     log = run('broken_native', [binary, 'linclust', broken, root / 'broken_native',
                root / 'broken_native_tmp', '--threads', '4', '--min-seq-id', '0.9',
                '-c', '0.9', '--cov-mode', '0', '--cluster-mode', '3', '-v', '3'])
-    check('native_ignores_broken_association', 'AAStore target enabled:' not in log)
+    check('native_ignores_broken_association', 'RabbitAAStore target enabled:' not in log)
     broken_tsv = root / 'broken_native.tsv'
     run('broken_native_tsv', [binary, 'createtsv', broken, broken,
                               root / 'broken_native', broken_tsv, '-v', '0'])
@@ -250,12 +250,12 @@ def main():
             if baseline_fastas is None:
                 baseline_fastas = fastas
             check(label + '_fasta_results', fastas == baseline_fastas)
-            check(label + '_reader', ('AAStore target enabled:' in log) == enabled)
+            check(label + '_reader', ('RabbitAAStore target enabled:' in log) == enabled)
             check(label + '_direct_exports',
-                  log.count('AAStore aastoreexportfasta: batch_get_records fields=all') ==
+                  log.count('RabbitAAStore aastoreexportfasta: batch_get_records fields=all') ==
                   (2 if enabled else 0))
             check(label + '_tsv_reader',
-                  ('AAStore createtsv: fields=name native_header_db=0' in log) == enabled)
+                  ('RabbitAAStore createtsv: fields=name native_header_db=0' in log) == enabled)
             if enabled:
                 stores = {store.resolve() for store in tmp.glob('*/input.aastore')}
                 check(label + '_automatic_store', len(stores) == 1)

@@ -14,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -260,7 +261,7 @@ void check_sequential_get_into(const aastore::Store& store,
                    stats.requested_residues == residues &&
                    stats.workers <= std::max<size_t>(1, options.threads) &&
                    stats.full_memory == (store.storage_mode() == aastore::StorageMode::FullMemory) &&
-                   stats.prefix_memory == (store.storage_mode() == aastore::StorageMode::PrefixMemory),
+                   stats.prefix_memory == (store.storage_mode() == aastore::StorageMode::PartialMemory),
                "direct sequential reports interval statistics within its thread budget");
         for (size_t i = 0; i < count; ++i) {
             const auto& reference = expected[begin + i];
@@ -382,10 +383,7 @@ void check_sequential_into_partitions(const std::filesystem::path& root,
     for (uint64_t budget : {uint64_t{0}, uint64_t{1}, disk_store.packed_bytes() / 2,
                             disk_store.packed_bytes()}) {
         aastore::StoreOptions store_options;
-        store_options.storage_mode = budget == 0 ? aastore::StorageMode::ByteRange
-            : budget == disk_store.packed_bytes() ? aastore::StorageMode::FullMemory
-            : aastore::StorageMode::PrefixMemory;
-        store_options.cache_bytes = budget;
+        store_options.preload_bytes = budget;
         aastore::Store source(path, store_options);
         if (!concurrent) {
             for (size_t threads : {size_t{0}, size_t{1}, size_t{2}, size_t{4}, size_t{16}}) {
@@ -477,8 +475,7 @@ void check_prefix_slices(const std::filesystem::path& root) {
     }
     aastore::build_fasta(fasta, path);
     aastore::StoreOptions store_options;
-    store_options.storage_mode = aastore::StorageMode::PrefixMemory;
-    store_options.cache_bytes = (residues * 5 + 7) / 8 / 2;
+    store_options.preload_bytes = (residues * 5 + 7) / 8 / 2;
     aastore::Store store(path, store_options);
     std::vector<aastore::SequenceId> ids;
     for (size_t i = expected.size(); i > 0; i -= 2) ids.push_back(i - 2);
@@ -563,15 +560,14 @@ struct StoreFixture {
 // 驻留选项供相关组各自打开 Store，不共享运行时状态。
 aastore::StoreOptions full_store_options() {
     aastore::StoreOptions options;
-    options.storage_mode = aastore::StorageMode::FullMemory;
+    options.preload_bytes = std::numeric_limits<uint64_t>::max();
     options.threads = 2;
     return options;
 }
 
 aastore::StoreOptions prefix_store_options() {
     aastore::StoreOptions options;
-    options.storage_mode = aastore::StorageMode::PrefixMemory;
-    options.cache_bytes = kPrefixCacheBytes;
+    options.preload_bytes = kPrefixCacheBytes;
     options.threads = 2;
     return options;
 }
@@ -747,17 +743,6 @@ void StoreFixture::check_builder() {
         }
         expect(rejected,
                "record batches reject absent text columns on demand");
-    }
-    for (const bool name : {false, true}) {
-        bool length_rejected = false;
-        try {
-            if (name) (void)sequence_only_store.name_length(0);
-            else (void)sequence_only_store.description_length(0);
-        } catch (const std::runtime_error& error) {
-            length_rejected = std::string(error.what()) ==
-                (name ? "store has no name column" : "store has no description column");
-        }
-        expect(length_rejected, "text length reports missing columns like record reads");
     }
 
     const std::filesystem::path names_only_path =
@@ -1066,7 +1051,7 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
            "separate ranges preserve unsorted request order");
 
     aastore::StoreOptions full_options;
-    full_options.storage_mode = aastore::StorageMode::FullMemory;
+    full_options.preload_bytes = built.packed_bytes;
     full_options.threads = 2;
     aastore::Store full_store(store_path, full_options);
     expect(full_store.storage_mode() == aastore::StorageMode::FullMemory,
@@ -1090,27 +1075,11 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
         expect(full_store.get(i).view(0) == expected[i],
                "full-memory single get " + std::to_string(i));
     }
-    for (const aastore::Store* reader : {&store, &full_store}) {
-        std::string output;
-        for (size_t i = expected.size(); i-- != 0;) {
-            reader->get_into(i, output);
-            expect(output == expected[i] && output.c_str()[output.size()] == '\0',
-                   "single get_into reuses output across lengths and empty records");
-        }
-        bool invalid_rejected = false;
-        try {
-            reader->get_into(reader->size(), output);
-        } catch (const std::out_of_range&) {
-            invalid_rejected = true;
-        }
-        expect(invalid_rejected, "single get_into rejects invalid IDs");
-    }
     aastore::StoreOptions prefix_options;
-    prefix_options.storage_mode = aastore::StorageMode::PrefixMemory;
-    prefix_options.cache_bytes = kPrefixCacheBytes;
+    prefix_options.preload_bytes = kPrefixCacheBytes;
     prefix_options.threads = 2;
     aastore::Store prefix_store(store_path, prefix_options);
-    expect(prefix_store.storage_mode() == aastore::StorageMode::PrefixMemory &&
+    expect(prefix_store.storage_mode() == aastore::StorageMode::PartialMemory &&
                prefix_store.resident_bytes() == kPrefixCacheBytes,
            "prefix-memory mode retains an immutable packed prefix");
     const std::vector<aastore::SequenceId> prefix_ids = {3, 1, 1, 5};
@@ -1233,9 +1202,16 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
         std::string scratch;
         for (size_t i = expected.size(); i-- != 0;) {
             reader->get_into(i, scratch);
-            expect(scratch == expected[i],
-                   "single string reads preserve content");
+            expect(scratch == expected[i] && scratch.c_str()[scratch.size()] == '\0',
+                   "single get_into reuses output across lengths and empty records");
         }
+        bool invalid_rejected = false;
+        try {
+            reader->get_into(reader->size(), scratch);
+        } catch (const std::out_of_range&) {
+            invalid_rejected = true;
+        }
+        expect(invalid_rejected, "single get_into rejects invalid IDs");
     }
     bool rejected = false;
     try {
@@ -1375,7 +1351,9 @@ void check_text_record_reads(const aastore::Store& store,
                     const auto description = store.batch_get_records(
                         {id}, aastore::RecordFields::Description);
                     if (name.name_view(0) != names[id] ||
-                        description.description_view(0) != descriptions[id]) return;
+                        description.description_view(0) != descriptions[id] ||
+                        store.name_length(id) != names[id].size() ||
+                        store.description_length(id) != descriptions[id].size()) return;
                     for (const auto* record : {&name, &description}) {
                         if (!record->sequences.empty() ||
                             record->sequences.stats.requested_sequences != 0 ||
@@ -1430,7 +1408,97 @@ void check_text_record_boundaries(const std::filesystem::path& root) {
                            records.description_view(i) ==
                                (id % 7 == 0 ? "" : std::string(100 + id % 33, 'd')),
                        "text record batches cross compact-offset blocks in both index and body modes");
+                expect(store.name_length(id) == records.name_view(i).size() &&
+                           store.description_length(id) == records.description_view(i).size(),
+                       "text lengths agree with reads across compact-offset block boundaries");
             }
+        }
+    }
+}
+
+// 文本长度按字节计数，仅查询索引，并区分缺失列与存在的空字段。
+void check_text_length_queries(const std::filesystem::path& root) {
+    const auto fasta = root / "text_lengths.fa";
+    const auto source = root / "text_lengths_source";
+    const std::vector<std::string> names{u8"序列", "plain", ""};
+    const std::vector<std::string> descriptions{u8"描述é", "", ""};
+    {
+        std::ofstream output(fasta);
+        output << '>' << names[0] << ' ' << descriptions[0] << "\nAC\n"
+               << ">plain\nW\n>\n";
+    }
+    aastore::build_fasta(fasta, source);
+    unsigned variant = 0;
+    for (const auto index : {aastore::IndexLoadMode::Mmap, aastore::IndexLoadMode::Read}) {
+        for (const bool resident : {false, true}) {
+            const auto path = root / ("text_lengths_" + std::to_string(variant++));
+            std::filesystem::copy(source, path, std::filesystem::copy_options::recursive);
+            aastore::StoreOptions options;
+            options.index_load_mode = index;
+            options.resident_names = options.resident_descriptions = resident;
+            aastore::Store store(path, options);
+            const auto records = store.batch_get_records(
+                {0, 1, 2}, aastore::RecordFields::Name | aastore::RecordFields::Description);
+            for (size_t id = 0; id < names.size(); ++id) {
+                expect(records.name_view(id) == names[id] &&
+                           records.description_view(id) == descriptions[id] &&
+                           store.name_length(id) == records.name_view(id).size() &&
+                           store.description_length(id) == records.description_view(id).size(),
+                       "text lengths match UTF-8 byte counts and zero-length fields");
+            }
+            expect(store.name_length(0) == 6 && store.description_length(0) == 8,
+                   "text lengths count UTF-8 bytes rather than Unicode characters");
+            for (const auto id : {store.size(), UINT64_MAX}) {
+                for (const bool name : {false, true}) {
+                    bool rejected = false;
+                    try {
+                        (void)(name ? store.name_length(id) : store.description_length(id));
+                    } catch (const std::out_of_range&) { rejected = true; }
+                    expect(rejected, "text length queries reject invalid IDs");
+                }
+            }
+
+            // 只截断本测试副本的正文，不动索引；长度查询不能依赖正文读取。
+            if (!resident) {
+                std::filesystem::resize_file(path / "names.bin", 0);
+                std::filesystem::resize_file(path / "descriptions.bin", 0);
+                expect(store.name_length(0) == names[0].size() &&
+                           store.description_length(0) == descriptions[0].size() &&
+                           store.name_length(2) == 0 && store.description_length(2) == 0,
+                       "text lengths remain available without readable text bodies");
+                aastore::ReadOptions reads;
+                reads.io_backend = aastore::IoBackend::Pread;
+                for (const auto field : {aastore::RecordFields::Name,
+                                        aastore::RecordFields::Description}) {
+                    bool rejected = false;
+                    try {
+                        (void)store.batch_get_records({0}, field, reads);
+                    } catch (const std::runtime_error&) { rejected = true; }
+                    expect(rejected, "the truncated test body cannot serve an actual text read");
+                }
+            }
+        }
+    }
+    for (unsigned fields = 0; fields < 3; ++fields) {
+        const auto path = root / ("text_lengths_optional_" + std::to_string(fields));
+        aastore::BuildOptions options;
+        options.write_names = (fields & 1) != 0;
+        options.write_descriptions = (fields & 2) != 0;
+        aastore::build_fasta(fasta, path, options);
+        aastore::Store store(path);
+        for (const bool name : {false, true}) {
+            const bool present = name ? options.write_names : options.write_descriptions;
+            if (present) {
+                expect((name ? store.name_length(0) : store.description_length(0)) ==
+                           (name ? names[0].size() : descriptions[0].size()),
+                       "length queries work when only their own text column is present");
+                continue;
+            }
+            bool rejected = false;
+            try {
+                (void)(name ? store.name_length(0) : store.description_length(0));
+            } catch (const std::runtime_error&) { rejected = true; }
+            expect(rejected, "length queries reject absent columns rather than report empty text");
         }
     }
 }
@@ -1438,6 +1506,7 @@ void check_text_record_boundaries(const std::filesystem::path& root) {
 // 记录字段选择、文本列统计及未请求字段的访问错误。
 void StoreFixture::check_text() {
     check_text_record_boundaries(temp.path());
+    check_text_length_queries(temp.path());
     aastore::Store store(store_path);
     auto full_options = full_store_options();
     full_options.index_load_mode = aastore::IndexLoadMode::Read;
@@ -1455,21 +1524,6 @@ void StoreFixture::check_text() {
                "record batch description " + std::to_string(i));
         expect(records.sequence_view(i) == expected[ids[i]],
                "record batch sequence " + std::to_string(i));
-    }
-    for (const aastore::Store* source : {&store, &full_store}) {
-        for (size_t id = 0; id < expected.size(); ++id) {
-            expect(source->name_length(id) == expected_names[id].size() &&
-                       source->description_length(id) == expected_descriptions[id].size(),
-                   "text lengths match record bytes including empty descriptions");
-        }
-        for (const bool name : {false, true}) {
-            bool rejected = false;
-            try {
-                if (name) (void)source->name_length(source->size());
-                else (void)source->description_length(source->size());
-            } catch (const std::out_of_range&) { rejected = true; }
-            expect(rejected, "text lengths reject the end sentinel as a record ID");
-        }
     }
     expect(records.names.stats.requested_strings == ids.size() &&
                records.names.stats.requested_bytes ==
@@ -1525,11 +1579,6 @@ void StoreFixture::check_text() {
         expect(loaded.resident_bytes() == 0 && loaded.preload_ns() == 0,
                "text residency is independent of sequence preloading");
         check_text_record_reads(loaded, expected_names, expected_descriptions);
-        for (const auto id : ids) {
-            expect(loaded.name_length(id) == expected_names[id].size() &&
-                       loaded.description_length(id) == expected_descriptions[id].size(),
-                   "text length queries use metadata in every resident-column combination");
-        }
 
         for (const auto backend : {aastore::IoBackend::Pread, aastore::IoBackend::Auto}) {
             aastore::ReadOptions reading;
@@ -1657,27 +1706,7 @@ void StoreFixture::check_text() {
         if (!no_records) {
             expect(result.name_view(0) == "onlyname" && result.description_view(0).empty(),
                    "resident reads handle a completely empty description column");
-            expect(loaded.name_length(0) == 8 && loaded.description_length(0) == 0,
-                   "text length handles an entirely empty description column");
         }
-    }
-
-    const auto boundary_input = temp.path() / "text_lengths_boundary.fa";
-    {
-        std::ofstream input(boundary_input);
-        for (size_t id = 0; id < 4098; ++id) {
-            input << ">n" << id;
-            if (id % 7 != 0) input << ' ' << std::string(100 + id % 33, 'd');
-            input << "\nAC\n";
-        }
-    }
-    const auto boundary_path = temp.path() / "text_lengths_boundary";
-    aastore::build_fasta(boundary_input, boundary_path);
-    aastore::Store boundary_store(boundary_path);
-    for (const aastore::SequenceId id : {0, 1, 4095, 4096, 4097}) {
-        expect(boundary_store.name_length(id) == 1 + std::to_string(id).size() &&
-                   boundary_store.description_length(id) == (id % 7 == 0 ? 0 : 100 + id % 33),
-               "text lengths cross the compact-offset block boundary and final record");
     }
 }
 

@@ -3,7 +3,7 @@ exec_prefix=${prefix}
 libdir=${prefix}/@AASTORE_PKGCONFIG_LIBDIR_RELATIVE@
 includedir=${prefix}/@AASTORE_PKGCONFIG_INCLUDEDIR_RELATIVE@
 
-Name: aastore
+Name: RabbitAAStore
 Description: Compact protein FASTA storage with random and sequential access
 Version: @PROJECT_VERSION@
 Libs: -L${libdir} -laastore @AASTORE_PKGCONFIG_PUBLIC_LIBS@

@@ -204,8 +204,8 @@ Parameters::Parameters():
         PARAM_DB_TYPE(PARAM_DB_TYPE_ID, "--dbtype", "Database type", "Database type 0: auto, 1: amino acid 2: nucleotides", typeid(int), (void *) &dbType, "[0-2]{1}"),
         PARAM_CREATEDB_MODE(PARAM_CREATEDB_MODE_ID, "--createdb-mode", "Createdb mode", "Createdb mode 0: copy data, 1: soft link data and write new index (works only with single line fasta/q) 2: GPU compatible db", typeid(int), (void *) &createdbMode, "^[0-2]{1}$"),
         PARAM_SHUFFLE(PARAM_SHUFFLE_ID, "--shuffle", "Shuffle input database", "Shuffle input database", typeid(bool), (void *) &shuffleDatabase, ""),
-        PARAM_AASTORE(PARAM_AASTORE_ID, "--aastore", "Use AAStore", "Automatically build and use AAStore sequence storage (amino-acid databases only)", typeid(bool), (void *) &aastore, ""),
-        PARAM_AASTORE_INDEX_MODE(PARAM_AASTORE_INDEX_MODE_ID, "--aastore-index-mode", "AAStore index mode", "Load AAStore sequence and text indexes with mmap or read", typeid(std::string), (void *) &aastoreIndexMode, "^(mmap|read)$"),
+        PARAM_AASTORE(PARAM_AASTORE_ID, "--aastore", "Use RabbitAAStore", "Automatically build and use RabbitAAStore sequence storage (amino-acid databases only)", typeid(bool), (void *) &aastore, ""),
+        PARAM_AASTORE_INDEX_MODE(PARAM_AASTORE_INDEX_MODE_ID, "--aastore-index-mode", "RabbitAAStore index mode", "Load RabbitAAStore sequence and text indexes with mmap or read", typeid(std::string), (void *) &aastoreIndexMode, "^(mmap|read)$"),
         PARAM_AASTORE_REPRESENTATIVE_ONLY(PARAM_AASTORE_REPRESENTATIVE_ONLY_ID, "--representative-only", "Representatives only", "Directly export representative records instead of clustered member FASTA", typeid(bool), (void *) &aastoreRepresentativeOnly, ""),
         PARAM_WRITE_LOOKUP(PARAM_WRITE_LOOKUP_ID, "--write-lookup", "Write lookup file", "write .lookup file containing mapping from internal id, fasta id and file number", typeid(int), (void *) &writeLookup, "^[0-1]{1}", MMseqsParameter::COMMAND_EXPERT),
         PARAM_USE_HEADER_FILE(PARAM_USE_HEADER_FILE_ID, "--use-header-file", "Use header DB", "use the sequence header DB instead of the body to map the entry keys", typeid(bool), (void *) &useHeaderFile, ""),
@@ -914,7 +914,7 @@ Parameters::Parameters():
     createseqfiledb.push_back(&PARAM_COMPRESSED);
     createseqfiledb.push_back(&PARAM_V);
 
-    // Direct, records-based AAStore cluster FASTA export.
+    // Direct, records-based RabbitAAStore cluster FASTA export.
     aastoreexportfasta.push_back(&PARAM_AASTORE);
     aastoreexportfasta.push_back(&PARAM_AASTORE_INDEX_MODE);
     aastoreexportfasta.push_back(&PARAM_AASTORE_REPRESENTATIVE_ONLY);

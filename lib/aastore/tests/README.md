@@ -1,45 +1,71 @@
-# 测试
+# RabbitAAStore tests
 
-普通独立构建默认只运行 `smoke.cmake` 注册的环境自检。其余回归测试由
-`regression.cmake` 注册，默认不编译；`Makefile` 复用根目录的 CMake 配置，
-显式开启完整测试，不另写编译器参数或维护测试源文件清单。
+A normal standalone build runs the small environment checks registered in
+`smoke.cmake`. The full regression suite is registered in `regression.cmake`
+and is disabled by default. This directory's Makefile enables the full suite
+through the root CMake configuration.
 
-## 编译和运行
+## Build and run
 
-进入 `tests/` 直接编译：
+From the repository root:
 
 ```sh
 cd tests
-make                           # 仅编译，默认最多 4 个编译任务
-make test                      # 编译后运行全部已注册测试
+make                           # Compile with up to four jobs
+make test                      # Build and run all registered tests
 make test CTEST_ARGS='-L sequential'
-make clean                     # 清理编译产物，保留配置和测试报告
+make clean                     # Remove build outputs; retain configuration and reports
 ```
 
-编译好的可执行文件直接放在 `tests/`，例如 `./aastore_test`、`./aastore_build`
-和 `./aastore_bench`；CMake 缓存、库和中间文件放在 `tests/build/`。
-`make clean` 会清理这些编译产物，保留配置和测试报告。
-可通过 `BUILD_DIR=/absolute/path`、`BUILD_TYPE=Debug`、`JOBS=8` 覆盖。
+Executables are placed directly in `tests/`, including `./aastore_test`,
+`./aastore_build`, and `./aastore_bench`. The CMake cache, libraries, and
+intermediate files are placed in `tests/build/`. Override `BUILD_DIR` with an
+absolute path to move those intermediate files; executable output remains in
+`tests/`.
 
-测试构建中关闭构建后自动自检，避免 `make test` 重复执行；自检仍会作为普通 CTest
-条目参与完整测试。任何测试失败都会使 `make test` 返回非零，io_uring 不可用仍明确跳过。
-旧构建目录中的 CMake 缓存不会随默认值变化自动重置；可在普通构建中显式传入
-`-DAASTORE_BUILD_TESTS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF`。
+This build disables automatic post-build smoke checks to avoid running them
+twice. They remain registered with CTest and run as part of `make test`. Test
+failures produce a nonzero exit status. Tests requiring host io_uring support
+report a skip when it is unavailable; compatibility tests use a private shim
+and do not require host io_uring support.
 
-## 可选部分
+## Build options
 
-- `IO_URING=OFF`：不链接 liburing，验证 pread 路径和模拟的兼容性测试。
-- `BENCHMARKS=OFF`：不构建 `aastore_bench`，也不注册依赖它的 benchmark 回归测试。
-- `PYTHON=ON`：编译 Python 扩展并注册 Python 测试，需要 Python 开发文件和 pybind11。
-- `CMAKE_ARGS='...'`：附加 CMake 参数，例如指定编译器、工具链或 pybind11 路径。
-- `CTEST_ARGS='...'`：附加 CTest 参数，例如 `-L smoke` 或 `-R aastore_options_test`。
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `JOBS` | `4` | Maximum parallel compiler jobs. |
+| `BUILD_TYPE` | `Release` | CMake build configuration. |
+| `BUILD_DIR` | `tests/build/` | CMake cache, libraries, and intermediate files. |
+| `IO_URING` | `ON` | Detect and enable liburing; set `OFF` to test a `pread`-only build. |
+| `BENCHMARKS` | `ON` | Build `aastore_bench` and register its regression tests. |
+| `PYTHON` | `OFF` | Build the Python extension and register Python tests. |
+| `CMAKE_ARGS` | Empty | Additional CMake configuration arguments. |
+| `CTEST_ARGS` | Empty | Additional CTest arguments, such as `-L smoke`. |
+
+For example, to enable Python tests with a selected interpreter and pybind11
+installation:
 
 ```sh
 make test PYTHON=ON \
   CMAKE_ARGS='-DPython_EXECUTABLE=/path/to/python -Dpybind11_DIR=/path/to/pybind11/cmake'
 ```
 
-完整测试覆盖建库、读取、编解码边界、参数校验、并发、io_uring 异常恢复、安装后链接
-以及 CMake 兼容性。benchmark 源码和实验脚本保留在 `benchmarks/`；此处的
-`benchmark_test.py` 只用自动生成的小数据检查它们，不启动论文数据集实验。
-CI 仍可直接传入 `-DAASTORE_BUILD_TESTS=ON -DAASTORE_BUILD_BENCHMARKS=ON`，然后运行 CTest。
+Python tests require the Python development files and pybind11. Setting
+`BENCHMARKS=OFF` also disables tests that depend on the benchmark executable.
+
+## Coverage
+
+The suite covers database construction, random and consecutive reads, text
+columns, codec boundaries, option validation, concurrency, io_uring error
+handling, installed SDK use, and CMake compatibility. Store tests can be selected
+with the `builder`, `random`, `sequential`, `text`, and `concurrency` CTest labels.
+
+[`benchmark_test.py`](benchmark_test.py) exercises the benchmark with small,
+generated data. It does not run the paper's dataset experiments. Performance
+measurement tools are documented in the [benchmark guide](../benchmarks/README.md).
+
+CI can enable the suite directly with `-DAASTORE_BUILD_TESTS=ON` and
+`-DAASTORE_BUILD_BENCHMARKS=ON`, then run CTest. Existing build directories retain
+their cached CMake settings. To disable the full suite and benchmark targets in
+a normal build, configure explicitly with
+`-DAASTORE_BUILD_TESTS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF`.

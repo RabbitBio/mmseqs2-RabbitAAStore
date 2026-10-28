@@ -18,7 +18,7 @@ namespace {
 
 void write_bytes(FILE* output, std::string_view bytes) {
     if (!bytes.empty() && std::fwrite(bytes.data(), 1, bytes.size(), output) != bytes.size()) {
-        throw std::runtime_error("Cannot write AAStore FASTA output");
+        throw std::runtime_error("Cannot write RabbitAAStore FASTA output");
     }
 }
 
@@ -42,13 +42,13 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
     Parameters& par = Parameters::getInstance();
     par.parseParameters(argc, argv, command, true, 0, 0);
     if (!par.aastore || !AAStoreTargetReader::hasNativeRecordHeaders(par.db1)) {
-        throw std::runtime_error("aastoreexportfasta requires --aastore 1 and certified AAStore record columns");
+        throw std::runtime_error("aastoreexportfasta requires --aastore 1 and certified RabbitAAStore record columns");
     }
     if (par.aastoreRepresentativeOnly && par.hhFormat) {
         throw std::runtime_error("Representative-only FASTA does not support HH format");
     }
     if (!Parameters::isEqualDbtype(FileUtil::parseDbType(par.db1.c_str()), Parameters::DBTYPE_AMINO_ACIDS)) {
-        throw std::runtime_error("AAStore FASTA export supports amino-acid databases only");
+        throw std::runtime_error("RabbitAAStore FASTA export supports amino-acid databases only");
     }
     AAStoreTargetReader::threadBatchQueueDepth(par.threads);
     DBReader<unsigned int> clusters(par.db2.c_str(), par.db2Index.c_str(), 1,
@@ -63,9 +63,9 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
     AAStoreTargetReader source;
     if (!source.openForDatabase(par.db1, 1, stageReserve, true, true, UINT64_C(8) * 1024 * 1024 * 1024) ||
         !source.recordsEnabled() || !source.recordsDenseIds()) {
-        throw std::runtime_error("AAStore direct export requires a verified dense source-ID certificate");
+        throw std::runtime_error("RabbitAAStore direct export requires a verified dense source-ID certificate");
     }
-    Debug(Debug::INFO) << "AAStore aastoreexportfasta: batch_get_records fields=all header=AAStore "
+    Debug(Debug::INFO) << "RabbitAAStore aastoreexportfasta: batch_get_records fields=all header=RabbitAAStore "
         << "single_writer=1 native_header_index=0 native_sequence_index=0 batch_bytes="
         << AAStoreTargetReader::kThreadBatchBytes << " read_threads=" << par.threads
         << " representative_only=" << (par.aastoreRepresentativeOnly ? 1 : 0) << "\n";
@@ -75,9 +75,9 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
     // cannot leave a misleading final FASTA behind.
     std::vector<char> outputBuffer(1024 * 1024);
     std::unique_ptr<FILE, int (*)(FILE*)> output(std::fopen(par.db3.c_str(), "wb"), std::fclose);
-    if (!output) throw std::runtime_error("Cannot open AAStore FASTA output: " + par.db3);
+    if (!output) throw std::runtime_error("Cannot open RabbitAAStore FASTA output: " + par.db3);
     if (std::setvbuf(output.get(), outputBuffer.data(), _IOFBF, outputBuffer.size()) != 0) {
-        throw std::runtime_error("Cannot buffer AAStore FASTA output");
+        throw std::runtime_error("Cannot buffer RabbitAAStore FASTA output");
     }
 
     struct Fragment {
@@ -116,7 +116,7 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
                 const aastore::RecordBatch* outer;
                 if (records.positions.find(fragment.key, position)) outer = &records.records;
                 else if (headers.positions.find(fragment.key, position)) outer = &headers.records;
-                else throw std::runtime_error("Cluster header is missing from AAStore batch");
+                else throw std::runtime_error("Cluster header is missing from RabbitAAStore batch");
                 const auto name = outer->name_view(position);
                 const auto description = outer->description_view(position);
                 const auto separator = source.headerSeparator(description);
@@ -165,7 +165,7 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
         if (count < static_cast<unsigned int>(par.minSequences) ||
             count > static_cast<unsigned int>(par.maxSequences)) continue;
         const unsigned int key = clusters.getDbKey(cluster);
-        if (key >= source.size()) throw std::runtime_error("Cluster key is outside certified AAStore source");
+        if (key >= source.size()) throw std::runtime_error("Cluster key is outside certified RabbitAAStore source");
         ++selectedClusters;
         const uint64_t headerBytes = source.recordLength(key) - source.sequenceLength(key);
         batchBytes = aastore_memory::add_bytes(batchBytes,
@@ -176,7 +176,7 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
             Util::parseKey(data, keyBuffer);
             data = Util::skipLine(data);
             const unsigned int memberKey = static_cast<unsigned int>(strtoul(keyBuffer, nullptr, 10));
-            if (memberKey >= source.size()) throw std::runtime_error("Member key is outside certified AAStore source");
+            if (memberKey >= source.size()) throw std::runtime_error("Member key is outside certified RabbitAAStore source");
             ids.push_back(memberKey);
             ++members;
             batchBytes = aastore_memory::add_bytes(batchBytes,
@@ -197,9 +197,9 @@ int aastore_export_fasta(int argc, const char** argv, const Command& command) {
     }
     flush();
     FILE* file = output.release();
-    if (std::fclose(file) != 0) throw std::runtime_error("Cannot close AAStore FASTA output");
+    if (std::fclose(file) != 0) throw std::runtime_error("Cannot close RabbitAAStore FASTA output");
     clusters.close();
-    Debug(Debug::INFO) << "AAStore aastoreexportfasta batches=" << batches
+    Debug(Debug::INFO) << "RabbitAAStore aastoreexportfasta batches=" << batches
         << " clusters=" << selectedClusters << " members=" << members
         << " additional_header_batches=" << headerBatches << "\n";
     return EXIT_SUCCESS;

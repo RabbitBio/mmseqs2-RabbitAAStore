@@ -1,9 +1,9 @@
-"""Compare native/AAStore scoring with complete-query candidate-byte batches.
+"""Compare native/RabbitAAStore scoring with complete-query candidate-byte batches.
 
 Repeated inexpensive coverage rejects reach the 64 MiB candidate-byte budget
 without decoding a large sequence database. Check that multiple queries share
 a batch and that an oversized query stays complete. A sparse, unindexed file
-tail forces actual ByteRange reads without allocating its logical extent.
+tail forces actual NoMemory reads without allocating its logical extent.
 """
 
 import argparse
@@ -104,7 +104,7 @@ def main():
           read_database(databases[True]))
 
     # DBReader only accesses indexed records. Its file-size reserve drives the
-    # production automatic policy to ByteRange; mmap mode avoids touching the
+    # production automatic policy to NoMemory; mmap mode avoids touching the
     # sparse tail. Never read this input with read_bytes/read_database.
     sparse_size = (os.sysconf('SC_PHYS_PAGES') *
                    os.sysconf('SC_PAGE_SIZE') * 2)
@@ -237,12 +237,12 @@ def main():
                         if not enabled:
                             continue
                         stage = 'alignment' if command == 'align' else command
-                        check(label + '_actual_byte_range',
-                              'storage_mode=byte_range' in log)
+                        check(label + '_actual_no_memory',
+                              'storage_mode=no_memory' in log)
                         check(label + '_candidate_byte_batch_policy',
-                              'AAStore {}: candidate-byte batches'.format(stage) in log and
+                              'RabbitAAStore {}: candidate-byte batches'.format(stage) in log and
                               'candidate_bytes_per_batch={}'.format(BATCH_BYTES) in log)
-                        stats = re.search(r'AAStore ' + stage +
+                        stats = re.search(r'RabbitAAStore ' + stage +
                                           r' batches=(\d+) candidate_occurrences=(\d+) '
                                           r'max_candidate_bytes=(\d+)', log)
                         check(label + '_batch_statistics', stats is not None)
@@ -259,7 +259,7 @@ def main():
             with pref.open('r+b') as output:
                 output.truncate(original_size)
 
-    print('Verified {} checks; actual ByteRange scoring used shared batches '
+    print('Verified {} checks; actual NoMemory scoring used shared batches '
           'and preserved oversized complete queries.'.format(len(checks)), flush=True)
 
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(AAStoreExample LANGUAGES CXX)
+project(RabbitAAStoreExample LANGUAGES CXX)
 
 find_package(aastore 0.1 CONFIG REQUIRED)
 

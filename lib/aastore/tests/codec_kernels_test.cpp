@@ -1,41 +1,17 @@
 // 文件职责：直接验证各解码内核，避免本机默认 AVX-512 掩盖 BMI2 尾块错误。
 // 此测试独立编译 codec.cpp，不链接 aastore，不改变生产接口或运行时分派。
 #include "../src/codec.cpp"
+#include "guarded_buffer.hpp"
 
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <sys/mman.h>
-#include <unistd.h>
 
 namespace {
 
-class GuardedBuffer {
-public:
-    GuardedBuffer() : page_(static_cast<size_t>(::sysconf(_SC_PAGESIZE))) {
-        void* mapping = ::mmap(nullptr, page_ * 2, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapping == MAP_FAILED) throw std::runtime_error("mmap failed");
-        data_ = static_cast<uint8_t*>(mapping);
-        if (::mprotect(data_ + page_, page_, PROT_NONE) != 0) {
-            ::munmap(data_, page_ * 2);
-            throw std::runtime_error("mprotect failed");
-        }
-    }
-    ~GuardedBuffer() { ::munmap(data_, page_ * 2); }
-    GuardedBuffer(const GuardedBuffer&) = delete;
-    GuardedBuffer& operator=(const GuardedBuffer&) = delete;
-    uint8_t* ending_at_guard(size_t size) {
-        if (size >= page_) throw std::runtime_error("test buffer too large");
-        return data_ + page_ - size;
-    }
-
-private:
-    size_t page_;
-    uint8_t* data_;
-};
+using aastore_test::GuardedBuffer;
 
 using Decode = void (*)(const uint8_t*, uint64_t, char*);
 struct Kernel {

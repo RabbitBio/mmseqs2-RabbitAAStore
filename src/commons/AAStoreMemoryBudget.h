@@ -49,7 +49,7 @@ inline Budget plan(uint64_t memoryLimit, uint64_t memoryAvailable,
         stageBytes);
     budget.remainingPool = budget.memoryAvailable > budget.memoryReserve
         ? budget.memoryAvailable - budget.memoryReserve : 0;
-    // Give AAStore 90% of the usable pool and retain the rest for transient
+    // Give RabbitAAStore 90% of the usable pool and retain the rest for transient
     // allocations and kernel file pages. Aligning the prefix keeps mapped and
     // packed-file boundaries stable across repeated budget probes.
     const uint64_t cacheCandidate =

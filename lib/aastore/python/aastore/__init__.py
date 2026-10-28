@@ -1,5 +1,5 @@
-# 文件职责：导出 AAStore 的 Python 接口，并将建库关键字参数转交给 C++ 核心。
-"""Compact FASTA storage backed by the AAStore C++ library."""
+# 文件职责：导出 RabbitAAStore 的 Python 接口，并将建库关键字参数转交给 C++ 核心。
+"""Compact FASTA storage backed by the RabbitAAStore C++ library."""
 
 from ._aastore import (
     Batch,

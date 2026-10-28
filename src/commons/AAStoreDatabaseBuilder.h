@@ -1,4 +1,4 @@
-// 文件职责：按原生最终 ID 构建 AAStore 的序列和文本列。
+// 文件职责：按原生最终 ID 构建 RabbitAAStore 的序列和文本列。
 #ifndef AASTORE_DATABASE_BUILDER_H
 #define AASTORE_DATABASE_BUILDER_H
 

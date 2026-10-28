@@ -1,8 +1,8 @@
 # MMseqs2: ultra fast and sensitive sequence search and clustering suite
 
-## MMseqs2 With AAStore
+## MMseqs2 With RabbitAAStore
 
-This fork bundles AAStore. On Linux with `liburing` development files installed,
+This fork bundles RabbitAAStore. On Linux with `liburing` development files installed,
 use the usual source build commands:
 
 ```bash
@@ -16,15 +16,15 @@ cd ..
 
 `createdb --aastore` builds sequences, names and descriptions in the final native
 ID order (including shuffle), without creating a separate native `_h` database.
-The native sequence file and clustering algorithms are retained. AAStore
-alignment and rescoring use AAStore metadata without loading the native sequence
+The native sequence file and clustering algorithms are retained. RabbitAAStore
+alignment and rescoring use RabbitAAStore metadata without loading the native sequence
 index; native k-mer matching and other database stages keep their usual indexes.
 `easy-linclust` and `easy-cluster` use the text columns for TSV and call
 `batch_get_records(All)` to write representative and complete FASTA files directly.
-New record stores certify their AAStore files, so these exports also work
+New record stores certify their RabbitAAStore files, so these exports also work
 without native sequence payloads, sequence indexes or headers. Cluster/result
 indexes remain native. An existing V1 record certificate needs its original
-native sequence index once for automatic upgrade; later exports use AAStore
+native sequence index once for automatic upgrade; later exports use RabbitAAStore
 file identities only.
 The direct command is `aastoreexportfasta`; `--representative-only 1` selects
 representatives for that export and does not change clustering. `createdb`,
@@ -33,15 +33,15 @@ automatic preparation adds sequence storage only; build from FASTA with
 `createdb --aastore` to include the text columns required for direct FASTA export.
 Nonresident scoring retains complete-query candidate batches of approximately
 64 MiB. See
-[AAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
+[RabbitAAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
 The upstream prebuilt binaries listed below do not include this option.
-Without `--aastore`, sequence reads always use native MMseqs2, even when an
-AAStore is associated. Memory configuration is automatic; the adapter has
-no AAStore-specific environment variables.
-`--aastore-index-mode mmap|read` selects how AAStore sequence and text indexes
+Without `--aastore`, sequence reads always use native MMseqs2, even when a
+RabbitAAStore is associated. Memory configuration is automatic; the adapter has
+no RabbitAAStore-specific environment variables.
+`--aastore-index-mode mmap|read` selects how RabbitAAStore sequence and text indexes
 are loaded. The default `mmap` uses reclaimable file mappings; `read` loads
 the complete indexes into Store-owned buffers. This option is forwarded through
-AAStore workflows and leaves sequence/text data storage selection unchanged.
+RabbitAAStore workflows and leaves sequence/text data storage selection unchanged.
 
 MMseqs2 (Many-against-Many sequence searching) is a software suite to search and cluster huge protein and nucleotide sequence sets. MMseqs2 is free and open source software implemented in C++ for Linux, MacOS, and (as beta version, via cygwin) Windows. The software is designed to run on multiple cores and servers and exhibits very good scalability. MMseqs2 can run 10000 times faster than BLAST. At 100 times its speed it achieves almost the same sensitivity. It can perform profile searches with the same sensitivity as PSI-BLAST at over 400 times its speed.
 

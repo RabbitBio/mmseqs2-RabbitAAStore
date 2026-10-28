@@ -1,32 +1,32 @@
-# AAStore
+# RabbitAAStore
 
-AAStore 是用于蛋白质 FASTA 的 C++17 / Python 存储库。将 FASTA 建成数据库后，
-可以按序列 ID 读取单条、批量或连续区间，适合需要反复访问大量序列的程序。
+RabbitAAStore is a C++17 library with Python bindings for storing and accessing
+large protein sequence collections. It converts a protein FASTA file into a
+compact database and retrieves individual sequences, arbitrary batches, or
+consecutive ranges by sequence ID.
 
-- 序列使用紧凑的 5 位编码保存，可同时保留名称和描述。
-- 批量读取保留请求顺序和重复 ID，支持多线程读取与解码。
-- 可按需从磁盘读取，也可将部分或全部编码数据预载到内存。
-- C++ 和 Python 共用同一套核心实现；x86-64 上按 CPU 能力选择 SIMD 或标量路径。
+- **Compact storage:** 5-bit encoding with contiguous packing and a compact
+  sequence index. Names and descriptions are stored in separate optional columns.
+- **Batched access:** range merging, parallel I/O, and SIMD decoding, with results
+  returned in the original request order, including repeated IDs.
+- **Configurable memory use:** read encoded sequences on demand, preload a fixed
+  prefix, or retain the entire encoded sequence collection in memory.
+- **Reusable output:** access decoded batches through lightweight views or decode
+  directly into caller-provided buffers.
 
-## 构建
+The Python package, C++ namespace, and command-line tools use the name `aastore`.
 
-| 项目 | 当前支持范围 |
-| --- | --- |
-| 系统 | Linux x86_64，64 位、小端、glibc |
-| C++ | CMake 3.16+，支持 C++17 的 GCC / Clang |
-| Python wheel | 普通 CPython 3.9–3.13，Linux x86_64 / glibc |
+## Installation
 
-这些是当前支持范围的说明。其他平台尚未验证；源码包声明 `Python >=3.9`，
-更新的 CPython 可尝试源码构建。
+The supported platform is Linux x86_64 with glibc and a C++17-capable GCC or Clang
+compiler. C++ builds require CMake 3.16 or later. The portable-wheel configuration
+targets standard CPython 3.9–3.13; source builds require Python 3.9 or later.
+See the [compatibility guide](docs/releasing.md#compatibility) for the validation
+scope and kernel/backend details.
 
-**内核建议：新部署优先使用发行版仍在维护的 Linux 6.1 或更新的 LTS 内核。**
-这不是已验证的最低内核要求。Linux 5.4 的 READV 兼容路径仍保留，`pread` 不依赖
-io_uring。维护状态见 [Linux 内核发布说明](https://www.kernel.org/category/releases.html)
-及所用发行版的维护政策。
+### C++ library and command-line tool
 
-### C++ 库和命令行工具
-
-在仓库根目录运行：
+Run from the repository root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -34,31 +34,18 @@ cmake --build build -j 4
 cmake --install build --prefix "$HOME/.local"
 ```
 
-普通 C++ 构建不依赖 Python。liburing 是可选依赖；找到可用的开发库时启用
-io_uring，未找到时使用 `pread`。
+Python is not required for a C++ build. If compatible liburing development files
+are available, CMake enables the optional `io_uring` backend; otherwise it builds
+with `pread`. To disable liburing detection, add
+`-DAASTORE_ENABLE_IO_URING=OFF` to the configure command.
 
-默认的独立构建会自动运行几个环境小测试：临时 FASTA 建库、单/多线程 `pread`、
-前缀/全内存读取、常驻文本、自动后端和 `io_uring`。启用 Python 构建时还检查扩展
-导入与读写。测试自行生成并清理小数据，不需要下载数据或 root 权限，也不是冷缓存 benchmark。
-失败会使构建返回非零；`io_uring` 不可用时该 case 显示 `Skipped` 和原因，
-不代表通过了 io_uring 测试，`Auto` 的读取仍必须通过。
+The default standalone build also runs small environment smoke checks. Full
+regression tests and benchmarks are separate build options. See
+[tests/README.md](tests/README.md) for test commands and
+[docs/releasing.md](docs/releasing.md#selecting-tests-and-cross-compiling) for
+build-time checks and cross-compilation.
 
-可用 `-DAASTORE_RUN_SMOKE_TESTS=OFF` 关闭编译后的自动检查。
-`add_subdirectory` 接入和交叉编译默认关闭自动检查；交叉运行须配置 emulator。
-只重跑小测试可用 `(cd build && ctest -L smoke -V)`。
-自动检查属于默认构建目标；显式只编译 `--target aastore` 或 Python wheel 不触发它。
-
-完整回归测试和 benchmark 默认不编译。需要测试时进入 `tests/`，直接运行：
-
-```bash
-cd tests
-make       # 编译，可执行文件直接放在 tests/
-make test  # 可选：运行测试
-```
-
-更多选项见 [测试说明](tests/README.md)。旧构建目录会保留原来的 CMake 开关设置。
-
-在自己的 CMake 项目中链接 AAStore：
+Link the installed library from your own `CMakeLists.txt`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)
@@ -68,43 +55,58 @@ add_executable(my_app main.cpp)
 target_link_libraries(my_app PRIVATE aastore::aastore)
 ```
 
-配置该项目时添加 `-DCMAKE_PREFIX_PATH="$HOME/.local"`。编译标准、头文件和链接依赖
-由 target 传递。仅安装库、构建共享库或直接嵌入源码的方法见 [C++ 指南](docs/cpp_api.md)。
+Configure your application with `-DCMAKE_PREFIX_PATH="$HOME/.local"`. The
+imported target supplies the include paths, C++ standard, and link dependencies.
+The [C++ guide](docs/cpp_api.md) also covers shared-library builds and embedding
+with `add_subdirectory`.
 
-### Python 包
+### Python package
 
-从仓库源码安装，需要 C++17 编译器和 Python 开发头文件；其他构建依赖由 pip 准备，
-无需安装 NumPy：
+Install from the repository root:
 
 ```bash
 python -m pip install .
 ```
 
-**Python 接口支持 io_uring，但默认构建和预编译 wheel 使用 `pread`。**
-要启用 io_uring，先安装 liburing 开发包，再运行：
+A C++17 compiler and Python development headers are required; pip installs the
+Python build dependencies in an isolated environment. NumPy is optional.
+
+Python builds use `pread` by default. To enable the optional `io_uring` backend,
+install the liburing development package for your system and run:
 
 ```bash
 python -m pip install . -Ccmake.define.AASTORE_ENABLE_IO_URING=ON
 ```
 
-这种构建可能依赖系统 liburing 运行库，详见 [Python 安装说明](docs/python_api.md#1-安装与输入)。
+This local build may depend on a system liburing runtime. See the
+[Python installation guide](docs/python_api.md#installation) for details.
 
-## 快速开始
+## Quick start
 
-以下示例使用已有的、至少包含一条记录的 `proteins.fa`。
+The reading examples below assume at least three sequences and both text
+columns, as provided by the bundled dataset and default construction options.
 
-### 建库
+### Build a database
+
+The repository includes a sample FASTA containing 100,000 protein sequences.
+After building the C++ tool, run this command from the repository root:
 
 ```bash
-./build/aastore_build proteins.fa proteins.aastore
+./build/aastore_build examples/data/huge_100k.fa proteins.aastore --threads 4
 ```
 
-序列 ID 按 FASTA 记录顺序从 `0` 开始。默认保存名称和描述；只需序列时加
-`--sequences-only`。已有数据库默认不会被覆盖，需要重建时显式加 `--overwrite`。
+Replace the input path with your own uncompressed protein FASTA file as needed.
+Sequence IDs follow the input record order, starting at `0`. Names and
+descriptions are included by default; `--sequences-only` omits both. Existing
+databases are not overwritten unless `--overwrite` is supplied.
 
-### C++ 读取
+The builder normalizes sequences: lowercase letters become uppercase, whitespace
+is removed, and characters other than `A`–`Z`, `*`, and `-` become `X`. Reads
+return these normalized sequences; original FASTA line wrapping is not stored.
 
-将下面代码保存为自己项目的 `main.cpp`，配合上面的 CMake 配置使用：
+### C++ example
+
+Save this as `main.cpp` and use the CMake configuration above:
 
 ```cpp
 #include <aastore/store.hpp>
@@ -112,18 +114,28 @@ python -m pip install . -Ccmake.define.AASTORE_ENABLE_IO_URING=ON
 
 int main() {
     aastore::Store store("proteins.aastore");
+
     auto single = store.get(0);
     std::cout << single[0] << '\n';
 
-    auto batch = store.get({0, 0});
+    auto batch = store.get({2, 0, 2});
     for (size_t i = 0; i < batch.size(); ++i) {
         std::cout << batch[i] << '\n';
     }
+
+    auto records = store.batch_get_records({0});
+    std::cout << records.name(0) << ' '
+              << records.description(0) << '\n';
 }
 ```
 
-`batch[i]` 对应第 `i` 个请求，返回独立字符串。
-完整示例和十万条 FASTA 数据集见 [examples](examples/README.md)，无需先安装 SDK：
+`get()` always returns a `Batch`, even for a single ID. `batch[i]` returns a
+string copy; `batch.view(i)` avoids that copy while the batch remains alive and
+its storage is unchanged. `batch_get_records()` reads names, descriptions, and
+sequences by default; its field mask can select only the columns you need.
+
+The [standalone C++ example](examples/README.md) can also be built without
+installing the library:
 
 ```bash
 cd examples
@@ -131,86 +143,104 @@ make
 make run
 ```
 
-### Python 读取
+### Python example
 
-Python 可以直接打开上一步生成的同一份数据库：
+Python can open the same database built by the C++ tool:
 
 ```python
 import aastore
 
 with aastore.Store("proteins.aastore") as store:
     print(store.get(0)[0])
-    batch = store.get([0, 0])
-    print(list(batch))
+    batch = store.get([2, 0, 2])
+    for sequence in batch:
+        print(sequence)
 
     record = store.batch_get_records([0])[0]
     print(record["name"], record["description"], record["sequence"])
 ```
 
-也可以直接在 Python 中建库：
+To build a database entirely from Python, use a new output directory:
 
 ```python
-aastore.build_fasta("proteins.fa", "proteins-python.aastore", threads=4)
+import aastore
+
+aastore.build_fasta(
+    "examples/data/huge_100k.fa", "proteins-python.aastore", threads=4
+)
 ```
 
-每次建库使用新的输出目录，或显式传入 `overwrite=True`。
-不需要准备输入文件的完整示例见 [examples/python/basic.py](examples/python/basic.py)。
+Use `overwrite=True` only when replacing an existing database. Complete examples
+for records, buffer views, and reusable output buffers are in
+[examples/python](examples/python).
 
-## 内存和读取选项
+## Memory and I/O options
 
-序列数据有三种打开模式：
+Set `StoreOptions.preload_bytes` to the maximum number of encoded sequence
+bytes to preload. The store selects its residency mode automatically at opening:
 
-| `storage_mode` | 行为 |
-| --- | --- |
-| `ByteRange`（默认） | 按需读取所请求的序列 |
-| `PrefixMemory` | 预载固定大小的编码数据前缀，其余部分按需读取 |
-| `FullMemory` | 预载全部编码数据，读取时从内存解码 |
+| `preload_bytes` | Reported `StorageMode` | Behavior |
+| --- | --- | --- |
+| `0` (default) | `NoMemory` | Read requested encoded sequences on demand without preloading them. |
+| Positive, below `packed_bytes` | `PartialMemory` | Preload a fixed prefix of the encoded sequences; read the rest on demand. |
+| Positive, at least `packed_bytes` | `FullMemory` | Preload all encoded sequences and use the full-memory read path. |
 
-预载的是编码数据。`PrefixMemory` 的大小由 `cache_bytes` 设置，前缀不会动态替换。
-名称和描述通过独立选项控制，默认不预载；也可以同时开启：
+Names and descriptions have independent residency options. For example:
 
 ```python
+import aastore
+
 opening = aastore.StoreOptions(
-    storage_mode=aastore.StorageMode.PrefixMemory,
-    cache_bytes=512 * 1024 * 1024,
+    preload_bytes=512 * 1024 * 1024,
     resident_names=True,
     resident_descriptions=True,
 )
+reads = aastore.ReadOptions(threads=4)
+
 with aastore.Store("proteins.aastore", opening) as store:
-    print(store.resident_bytes, store.resident_text_bytes)
+    batch = store.get([2, 0, 2], reads)
+    print(store.storage_mode, store.resident_bytes, store.resident_text_bytes)
 ```
 
-C++ 使用 `StoreOptions` 中的同名字段。启用后，打开库时将对应列的完整正文读入
-`Store` 持有的内存缓冲，后续批读直接复制该缓冲，不再读取正文文件。
-`resident_text_bytes` 表示已载入的文本字节数，不含索引，也不是进程实时 RSS。
+`preload_bytes` is a limit on encoded sequence preloading, not total process
+memory. The store loads at most `packed_bytes`, even with a larger budget.
+Indexes, text columns, decoded output, and I/O buffers consume additional memory;
+`NoMemory` can also use the operating system page cache. In `PartialMemory`, the
+prefix remains fixed for the lifetime of the store. The selected mode is available
+through the read-only `store.storage_mode` property; it is not an opening option.
 
-索引加载由 `index_load_mode` 独立控制，默认 `IndexLoadMode.Mmap` 使用只读映射。
-选择 `Read` 会在打开时将 `meta.bin` 和存在的 `names.meta`、`descriptions.meta`
-完整读入 `Store` 持有的内存；序列和文本正文仍按上面的选项读取：
+Index loading is independent of sequence residency. The default
+`IndexLoadMode.Mmap` maps sequence and text indexes read-only, allowing the
+operating system to load pages on demand. `IndexLoadMode.Read` reads the complete
+indexes into store-owned buffers when opening the database. Neither option
+alone preloads sequence or text contents.
 
-```python
-opening = aastore.StoreOptions(index_load_mode=aastore.IndexLoadMode.Read)
-with aastore.Store("proteins.aastore", opening) as store:
-    print(store.index_load_mode)
-```
+`StoreOptions.threads` controls preloading; `ReadOptions.threads` controls each
+read call. Both default to `8`, whereas database construction defaults to one
+thread. `IoBackend.Auto` uses `io_uring` when available and falls back to `pread`
+when initialization or the required read operation is unsupported. Explicit
+`IoBackend.IoUring` reports unavailability as an error. Actual I/O errors are
+propagated to the caller. Sequential reads use the dedicated `pread` path.
 
-每次读取的线程数由 `ReadOptions.threads` 设置，例如 `aastore.ReadOptions(threads=4)`。
-默认的 `IoBackend.Auto` 在构建及运行环境允许时使用 io_uring，后端初始化不可用时
-回退到 `pread`；显式选择 `IoUring` 时，不可用会报错，实际 I/O 错误也会向调用方传播。
+## Documentation
 
-更多按字段读取、连续扫描、零复制视图、复用输出缓冲和诊断选项见下面的指南。
+Start with the [documentation index](docs/README.md), or choose a guide:
 
-## 详细文档
+| Document | Contents |
+| --- | --- |
+| [C++ API guide](docs/cpp_api.md) | Construction, reads, field selection, memory settings, buffers, and statistics. |
+| [Python API guide](docs/python_api.md) | Installation, options, sequence and record access, buffer views, and lifetimes. |
+| [Examples](examples/README.md) | Standalone C++ and Python examples using the bundled dataset. |
+| [Benchmarks](benchmarks/README.md) | Benchmark commands, cold-cache runs, and timing definitions. |
+| [Tests](tests/README.md) | Build and run the regression suite. |
+| [Release guide](docs/releasing.md) | Supported configurations, SDK validation, and version compatibility. |
+| [Changelog](CHANGELOG.md) | Changes and API migration notes. |
 
-- [C++ 使用指南](docs/cpp_api.md)：建库、读取接口、内存模式、线程及实现说明。
-- [Python API 指南](docs/python_api.md)：完整参数、批次类型、缓冲区和生命周期。
-- [基准测试](benchmarks/README.md)：命令行参数、冷缓存实验和指标含义。
-- [版本与发布](docs/releasing.md)：SDK 验证、交叉编译和兼容约定。
-- [变更记录](CHANGELOG.md)：版本变化及旧接口迁移说明。
+The package version is defined in [VERSION](VERSION). Package versions and
+database format versions are managed separately; an API update does not
+necessarily require rebuilding databases.
 
-项目版本由 [VERSION](VERSION) 统一管理。0.x 阶段的小版本可能调整 API；
-包版本与磁盘格式版本分别管理，升级包不自动意味着需要重建数据库。
+## License
 
-## 许可证
-
-AAStore 采用 GNU General Public License version 3（`GPL-3.0-only`），见 [LICENSE](LICENSE)。
+RabbitAAStore is distributed under the GNU General Public License, version 3
+only (`GPL-3.0-only`). See [LICENSE](LICENSE).

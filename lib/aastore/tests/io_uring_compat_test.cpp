@@ -340,10 +340,12 @@ int main() {
 #endif
         Configuration legacy;
         legacy.read = false;
-        run_case("READV only", legacy, [] { check_success(true); check_public_store(true); });
-        legacy.probe_available = false;
-        run_case("no PROBE", legacy, [] { check_success(true); check_public_store(true); });
 #if defined(AASTORE_URING_HAS_PROBE)
+        run_case("READV only", legacy, [] { check_success(true); check_public_store(true); });
+#endif
+        legacy.probe_available = false;
+#if defined(AASTORE_URING_HAS_PROBE)
+        run_case("no PROBE", legacy, [] { check_success(true); check_public_store(true); });
         Configuration unsupported;
         unsupported.read = false;
         unsupported.readv = false;

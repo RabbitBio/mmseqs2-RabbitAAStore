@@ -61,7 +61,8 @@ def main():
         for fraction in (0, 25, 50, 75):
             budget = packed_bytes * fraction // 100
             storage_cases.append((["--memory-bytes", budget], budget,
-                                  "prefix_memory" if budget else "byte_range"))
+                                  "partial_memory" if budget else "no_memory"))
+        signature_fields = ("trace_hash_fnv1a64", "output_hash_fnv1a64", "residues", "batches_per_round")
         paired = {}
         for backend in backends:
             for threads in (1, 4, 16, 64):
@@ -81,8 +82,7 @@ def main():
                         assert metrics["requests"] == ("100" if percent == "10" else "1000")
                         assert metrics["sampling"] == "without_replacement"
                         assert int(metrics["workers"]) <= threads
-                        signature = tuple(metrics[key] for key in (
-                            "trace_hash_fnv1a64", "output_hash_fnv1a64", "residues", "batches_per_round"))
+                        signature = tuple(metrics[key] for key in signature_fields)
                         if percent in paired:
                             assert paired[percent] == signature
                         paired[percent] = signature
@@ -102,6 +102,26 @@ def main():
             metrics = checked(base + ["--batch-bytes", limit, "--rounds", 2])
             assert metrics["output_hash_fnv1a64"] == digest(records, ids)
             assert int(metrics["residues"]) == 2 * sum(len(records[index]) for index in ids)
+        # Exact and oversized budgets must select FullMemory, including when
+        # the caller supplies bytes rather than the full-residency shorthand.
+        for budget, mode in ((0, "no_memory"), (1, "partial_memory"),
+                             (packed_bytes - 1, "partial_memory"),
+                             (packed_bytes, "full_memory"),
+                             (packed_bytes + 1, "full_memory"),
+                             ((1 << 64) - 1, "full_memory")):
+            metrics = checked(base + ["--memory-bytes", budget])
+            assert metrics["storage_mode"] == mode
+            assert int(metrics["preload_bytes"]) == budget
+            assert int(metrics["resident_bytes"]) == min(budget, packed_bytes)
+            assert metrics["output_hash_fnv1a64"] == digest(records, ids)
+            assert "prefix_budget_bytes" not in metrics
+            if mode == "full_memory":
+                assert metrics["read_bytes"] == "0" and metrics["ranges"] == "0"
+        for full_args in (["--full-memory"], ["--memory-mb", -1]):
+            metrics = checked(base + full_args)
+            assert metrics["storage_mode"] == "full_memory"
+            assert int(metrics["preload_bytes"]) == (1 << 64) - 1
+            assert int(metrics["resident_bytes"]) == packed_bytes
         single_batch = checked([args.bench, store, "--sample-percent", 100])
         assert single_batch["output_hash_fnv1a64"] == paired["100"][1]
         for removed in ("read_strategy", "scan_max_range_limit_bytes", "sparse_ranges", "scan_ranges"):
@@ -126,6 +146,7 @@ def main():
                       ["--sample-percent", "10", "--requests", "1"],
                       ["--drop-cache", "--rounds", "2"],
                       ["--memory-bytes", "-1"],
+                      ["--memory-bytes", str(1 << 64)],
                       ["--memory-bytes", "1", "--memory-mb", "0"],
                       ["--memory-bytes", "1", "--full-memory"],
                       ["--read-strategy", "sparse"], ["--read-strategy", "scan"],
@@ -136,18 +157,54 @@ def main():
             assert result.returncode == 2, extra
         matrix = root / "matrix"
         runner = Path(__file__).resolve().parents[1] / "benchmarks/run_cold_matrix.py"
+        # The direct sweep covers all budgets and thread counts. This smaller
+        # matrix checks runner orchestration across all three storage modes.
         checked([sys.executable, runner, store, matrix, "--bench", args.bench,
                  "--label", "synthetic_smoke_only", "--percents", "10", "100",
-                 "--threads", "1", "4", "16", "64", "--prefix-percents", "0", "25", "50", "75",
+                 "--threads", "1", "4", "--prefix-percents", "0", "50",
                  "--backend", backends[-1], "--batch-bytes", 4096])
         assert (matrix / "COMPLETE").exists()
+        manifest = json.loads((matrix / "manifest.json").read_text())
+        assert manifest["records"] == len(records)
+        assert len(manifest["case_order"]) == 12
         with (matrix / "results.csv").open(newline="") as handle:
             rows = list(csv.DictReader(handle))
-        assert len(rows) == 40
-        assert {row["resident_percent"] for row in rows} == {"0", "25", "50", "75", "100"}
-        assert all(row["status"] == "ok" for row in rows)
+        assert len(rows) == 12
+        assert {(row["percent"], row["threads"], row["resident_percent"]) for row in rows} == {
+            (percent, threads, resident) for percent in ("10", "100")
+            for threads in ("1", "4") for resident in ("0", "50", "100")}
+        assert all(row["status"] == "ok" and row["cold_cache_verified"] == "1" for row in rows)
         assert all(row["collect_diagnostics"] == "1" and
                    row["diagnostics_collected"] == "1" for row in rows)
+        for row in rows:
+            assert tuple(row[key] for key in signature_fields) == paired[row["percent"]]
+            command = json.loads((matrix / (row["case"] + ".command.json")).read_text())
+            assert command[command.index("--threads") + 1] == row["threads"]
+            assert command[command.index("--sample-percent") + 1] == row["percent"]
+            assert command[command.index("--memory-bytes") + 1] == row["resident_budget_bytes"]
+            assert row["preload_bytes"] == row["resident_budget_bytes"]
+            assert (matrix / (row["case"] + ".log")).is_file()
+        # Full residency on an empty store requests one byte but allocates
+        # none; the zero-budget case must remain NoMemory.
+        empty_fasta, empty_store = root / "empty.fasta", root / "empty-store"
+        empty_fasta.write_text("")
+        checked([args.build, empty_fasta, empty_store, "--sequences-only"])
+        empty_matrix = root / "empty-matrix"
+        checked([sys.executable, runner, empty_store, empty_matrix, "--bench", args.bench,
+                 "--label", "synthetic_empty_only", "--percents", "100",
+                 "--threads", "1", "--prefix-percents", "0", "--backend", "pread"])
+        with (empty_matrix / "results.csv").open(newline="") as handle:
+            empty_rows = list(csv.DictReader(handle))
+        assert len(empty_rows) == 2 and (empty_matrix / "COMPLETE").exists()
+        for row in empty_rows:
+            full = row["mode"] == "full"
+            assert row["status"] == "ok"
+            assert row["storage_mode"] == ("full_memory" if full else "no_memory")
+            assert row["preload_bytes"] == ("1" if full else "0")
+            assert row["resident_bytes"] == row["resident_budget_bytes"] == "0"
+            assert row["requests"] == row["residues"] == "0"
+            command = json.loads((empty_matrix / (row["case"] + ".command.json")).read_text())
+            assert command[command.index("--memory-bytes") + 1] == row["preload_bytes"]
         for prefixes in (["100"], ["-1"], ["nan"], ["25", "25.0"]):
             result = subprocess.run([str(sys.executable), str(runner), str(store), str(root / "invalid"),
                                      "--label", "invalid", "--prefix-percents"] + prefixes,

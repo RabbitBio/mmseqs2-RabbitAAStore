@@ -44,10 +44,19 @@ class PythonInterfaceTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    # 按指定驻留模式打开同一份数据库。
+    # 用预算触发待测驻留路径，模式本身不再是开库选项。
+    @staticmethod
+    def preload_for_mode(mode, packed_bytes, partial_bytes=None):
+        return {
+            aastore.StorageMode.NoMemory: 0,
+            aastore.StorageMode.PartialMemory: (max(1, packed_bytes // 2)
+                                               if partial_bytes is None else partial_bytes),
+            aastore.StorageMode.FullMemory: packed_bytes,
+        }[mode]
+
     def open_store(self, mode):
         return aastore.Store(self.path, aastore.StoreOptions(
-            storage_mode=mode, cache_bytes=self.build_stats.packed_bytes // 2,
+            preload_bytes=self.preload_for_mode(mode, self.build_stats.packed_bytes),
             threads=4, resident_names=True, resident_descriptions=True,
         ))
 
@@ -181,17 +190,6 @@ class PythonInterfaceTest(unittest.TestCase):
             aastore.build_fasta(self.fasta, output_path, threads=0)
         self.assertFalse(output_path.exists())
 
-        for mode in (aastore.StorageMode(2), aastore.StorageMode(99),
-                     aastore.StorageMode.PrefixMemory):
-            options = aastore.StoreOptions()
-            options.storage_mode = mode
-            with self.subTest(mode=mode):
-                with self.assertRaises(ValueError):
-                    options.validate()
-                for path in (self.path, self.root / "missing-store"):
-                    with self.assertRaises(ValueError):
-                        aastore.Store(path, options)
-
         for mode in (aastore.IndexLoadMode(99), aastore.IndexLoadMode(255)):
             options = aastore.StoreOptions(index_load_mode=mode)
             with self.subTest(invalid_index_load_mode=mode):
@@ -201,7 +199,7 @@ class PythonInterfaceTest(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         aastore.Store(path, options)
 
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             with self.open_store(mode) as store:
                 for backend in (aastore.IoBackend(99), aastore.IoBackend(255)):
@@ -237,7 +235,7 @@ class PythonInterfaceTest(unittest.TestCase):
 
     # 单条和批量 get 都返回 Batch；直接输出复用调用方内存而不修改尾部。
     def test_unified_get(self):
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             with self.open_store(mode) as store:
                 self.assertFalse(hasattr(store, "batch_get"))
@@ -290,10 +288,10 @@ class PythonInterfaceTest(unittest.TestCase):
         options.io_backend = aastore.IoBackend.Pread
         ids = [1, 1, 3, 5]
         expected = [self.sequences[i] for i in ids]
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             store_options = aastore.StoreOptions(
-                storage_mode=mode, cache_bytes=1 if mode == aastore.StorageMode.PrefixMemory else 0,
+                preload_bytes=self.preload_for_mode(mode, self.build_stats.packed_bytes, 1),
                 threads=0,
             )
             self.assertIsNone(store_options.validate())
@@ -303,6 +301,67 @@ class PythonInterfaceTest(unittest.TestCase):
                 buffers = [bytearray(len(sequence)) for sequence in expected]
                 store.get_into(ids, buffers, options)
                 self.assertEqual(buffers, [sequence.encode() for sequence in expected])
+
+    # 预算边界决定实际驻留方式，达到全量时走无序请求的全内存快速路径。
+    def test_preload_budget(self):
+        packed = self.build_stats.packed_bytes
+        ids = [5, 1, 2, 0, 1]
+        expected = [self.sequences[i] for i in ids]
+        reads = aastore.ReadOptions(io_backend=aastore.IoBackend.Pread)
+        for budget, mode in (
+            (0, aastore.StorageMode.NoMemory),
+            (1, aastore.StorageMode.PartialMemory),
+            (packed - 1, aastore.StorageMode.PartialMemory),
+            (packed, aastore.StorageMode.FullMemory),
+            (packed + 1, aastore.StorageMode.FullMemory),
+            ((1 << 64) - 1, aastore.StorageMode.FullMemory),
+        ):
+            with self.subTest(budget=budget), aastore.Store(
+                    self.path, aastore.StoreOptions(preload_bytes=budget)) as store:
+                self.assertEqual(store.storage_mode, mode)
+                self.assertEqual(store.resident_bytes, min(budget, packed))
+                batch = store.get(ids, reads)
+                self.assertEqual(list(batch), expected)
+                self.assertEqual(batch.stats.full_memory, mode == aastore.StorageMode.FullMemory)
+                self.assertEqual(batch.stats.prefix_memory, mode == aastore.StorageMode.PartialMemory)
+                if mode == aastore.StorageMode.FullMemory:
+                    self.assertEqual(batch.stats.read_bytes, 0)
+                    self.assertEqual(batch.stats.ranges, 0)
+                with self.assertRaises(AttributeError):
+                    store.storage_mode = aastore.StorageMode.NoMemory
+
+        for budget in (-1, 1 << 64):
+            with self.subTest(invalid_budget=budget):
+                with self.assertRaises(TypeError):
+                    aastore.StoreOptions(preload_bytes=budget)
+                with self.assertRaises(TypeError):
+                    aastore.StoreOptions().preload_bytes = budget
+        for field in ("storage_mode", "cache_bytes"):
+            with self.subTest(removed_option=field):
+                with self.assertRaises(TypeError):
+                    aastore.StoreOptions(**{field: 0})
+                self.assertFalse(hasattr(aastore.StoreOptions(), field))
+                with self.assertRaises(AttributeError):
+                    setattr(aastore.StoreOptions(), field, 0)
+        self.assertFalse(hasattr(aastore.StorageMode, "ByteRange"))
+        self.assertFalse(hasattr(aastore.StorageMode, "PrefixMemory"))
+
+    # 空编码文件在零预算时保持按需模式，正预算时全驻留且不分配序列字节。
+    def test_empty_preload_budget(self):
+        for label, contents, expected in (("empty", "", []),
+                                           ("empty-sequence", ">empty\n", [""])):
+            fasta, path = self.root / (label + ".fasta"), self.root / (label + "-store")
+            fasta.write_text(contents)
+            stats = aastore.build_fasta(fasta, path)
+            self.assertEqual(stats.packed_bytes, 0)
+            for budget in (0, 1, (1 << 64) - 1):
+                with self.subTest(label=label, budget=budget), aastore.Store(
+                        path, aastore.StoreOptions(preload_bytes=budget)) as store:
+                    self.assertEqual(store.storage_mode, aastore.StorageMode.NoMemory if budget == 0
+                                     else aastore.StorageMode.FullMemory)
+                    self.assertEqual(store.resident_bytes, 0)
+                    self.assertEqual(list(store.get(list(range(len(expected))))), expected)
+                    self.assertEqual(list(store.sequential_get(0, len(expected))), expected)
 
     # 已删除的策略选项必须报错，不能被静默接受。
     def test_removed_scan_options(self):
@@ -317,11 +376,11 @@ class PythonInterfaceTest(unittest.TestCase):
             for field in ("sparse_ranges", "scan_ranges"):
                 self.assertFalse(hasattr(stats, field))
 
-    # 覆盖各驻留模式、后端与线程预算，比较索引、切片、顺读和诊断结果。
+    # Cover residency, backends, thread budgets, batch views, and diagnostics.
     def test_reads(self):
         ids = [130, 1, 0, 6, 2, 6, 4, 11]
         expected = [self.sequences[i] for i in ids]
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             with self.open_store(mode) as store:
                 self.assertEqual(len(store), len(self.sequences))
@@ -336,6 +395,13 @@ class PythonInterfaceTest(unittest.TestCase):
                     self.assertEqual(store.sequence_length(i), len(value))
                 self.assertEqual(store[-1], self.sequences[-1])
                 for backend in self.backends:
+                    # Sequential reads use pread regardless of the backend option.
+                    with self.subTest(mode=mode, backend=backend, access="sequential"):
+                        sequential = store.sequential_get(
+                            1, 2, aastore.ReadOptions(threads=2, io_backend=backend)
+                        )
+                        self.assertEqual(list(sequential), self.sequences[1:2])
+                        self.assertFalse(sequential.stats.io_uring)
                     for threads in (0, 1, 4):
                         for diagnostics in (False, True):
                             with self.subTest(mode=mode, backend=backend, threads=threads, diagnostics=diagnostics):
@@ -361,17 +427,26 @@ class PythonInterfaceTest(unittest.TestCase):
                                 self.assertEqual(batch.stats.requested_residues, sum(map(len, expected)))
                                 self.assertLessEqual(batch.stats.workers, max(1, threads))
                                 self.check_stats(batch.stats, diagnostics)
-                                for begin, end in ((0, len(store)), (1, 6), (0, 1), (3, 5), (5, 5)):
-                                    sequential = store.sequential_get(begin, end, options)
-                                    self.assertEqual(list(sequential), self.sequences[begin:end])
-                                    self.assertEqual(len(sequential.storage), sum(map(len, self.sequences[begin:end])))
-                                    self.assertFalse(sequential.stats.io_uring)
-                                    self.check_stats(sequential.stats, diagnostics)
                                 empty = store.get([], options)
                                 self.assertTrue(empty.empty())
                                 self.assertEqual(list(empty), [])
                                 self.assertEqual(bytes(memoryview(empty)), b"")
                                 self.check_stats(empty.stats, diagnostics)
+                # Exercise each interval once per residency/thread/diagnostic setting.
+                for threads in (0, 1, 4):
+                    for diagnostics in (False, True):
+                        with self.subTest(mode=mode, threads=threads, diagnostics=diagnostics,
+                                          access="sequential intervals"):
+                            options = aastore.ReadOptions(
+                                threads=threads, io_backend=aastore.IoBackend.Pread,
+                                collect_diagnostics=diagnostics,
+                            )
+                            for begin, end in ((0, len(store)), (1, 6), (0, 1), (3, 5), (5, 5)):
+                                sequential = store.sequential_get(begin, end, options)
+                                self.assertEqual(list(sequential), self.sequences[begin:end])
+                                self.assertEqual(len(sequential.storage), sum(map(len, self.sequences[begin:end])))
+                                self.assertFalse(sequential.stats.io_uring)
+                                self.check_stats(sequential.stats, diagnostics)
                 with self.assertRaises(IndexError):
                     store.get(len(store))
                 with self.assertRaises(IndexError):
@@ -418,6 +493,58 @@ class PythonInterfaceTest(unittest.TestCase):
                 names.sequence(0)
             self.assertEqual(list(store.batch_get_records([1], aastore.RecordFields.None_)), [{}])
 
+    # 长度查询使用文本索引，返回 UTF-8 字节数并遵守列存在性、ID 和关闭规则。
+    def test_text_lengths(self):
+        fasta, path = self.root / "text-lengths.fasta", self.root / "text-lengths-store"
+        names, descriptions = ["", "na\u00efve", "tail"], ["", "\u63cf\u8ff0 \u00b5", ""]
+        fasta.write_text("".join(
+            ">{}{}\nACD\n".format(name, " " + description if description else "")
+            for name, description in zip(names, descriptions)
+        ), encoding="utf-8")
+        aastore.build_fasta(fasta, path)
+        for index_mode in (aastore.IndexLoadMode.Mmap, aastore.IndexLoadMode.Read):
+            for resident in (False, True):
+                with self.subTest(index_mode=index_mode, resident=resident), aastore.Store(
+                        path, aastore.StoreOptions(index_load_mode=index_mode,
+                                                  resident_names=resident,
+                                                  resident_descriptions=resident)) as store:
+                    records = store.batch_get_records(range(len(names)))
+                    for i, (name, description) in enumerate(zip(names, descriptions)):
+                        self.assertEqual(store.name_length(i), len(name.encode("utf-8")))
+                        self.assertEqual(store.description_length(i), len(description.encode("utf-8")))
+                        self.assertEqual(store.name_length(i), records.names.lengths[i])
+                        self.assertEqual(store.description_length(i), records.descriptions.lengths[i])
+                    self.assertGreater(store.name_length(1), len(names[1]))
+                    self.assertGreater(store.description_length(1), len(descriptions[1]))
+                    for method in (store.name_length, store.description_length):
+                        for invalid in (len(names), (1 << 64) - 1):
+                            with self.assertRaises(IndexError):
+                                method(invalid)
+                        for invalid in (-1, 1 << 64):
+                            with self.assertRaises(TypeError):
+                                method(invalid)
+                for method in (store.name_length, store.description_length):
+                    with self.assertRaises(ValueError):
+                        method(0)
+
+        for write_names, write_descriptions in ((False, True), (True, False), (False, False)):
+            missing_path = self.root / f"text-lengths-{write_names}-{write_descriptions}"
+            aastore.build_fasta(fasta, missing_path,
+                               write_names=write_names, write_descriptions=write_descriptions)
+            with aastore.Store(missing_path) as store:
+                for present, method in ((write_names, store.name_length),
+                                        (write_descriptions, store.description_length)):
+                    if not present:
+                        with self.assertRaises(RuntimeError):
+                            method(0)
+
+        # Once open, querying lengths must not depend on reading either text file.
+        with aastore.Store(path, aastore.StoreOptions(index_load_mode=aastore.IndexLoadMode.Read)) as store:
+            (path / "names.bin").write_bytes(b"")
+            (path / "descriptions.bin").write_bytes(b"")
+            self.assertEqual(store.name_length(1), len(names[1].encode("utf-8")))
+            self.assertEqual(store.description_length(1), len(descriptions[1].encode("utf-8")))
+
     # 覆盖乱序及重复请求、空序列和空文本；UTF-8 边界以字节而非字符计量。
     def test_layout_views(self):
         fasta = self.root / "layout.fasta"
@@ -432,10 +559,10 @@ class PythonInterfaceTest(unittest.TestCase):
         stats = aastore.build_fasta(fasta, path)
         ids = [2, 1, 0, 1, 3]
         options = aastore.ReadOptions(threads=2, io_backend=aastore.IoBackend.Pread)
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             with self.subTest(mode=mode), aastore.Store(path, aastore.StoreOptions(
-                    storage_mode=mode, cache_bytes=max(1, stats.packed_bytes // 2))) as store:
+                    preload_bytes=self.preload_for_mode(mode, stats.packed_bytes))) as store:
                 self.check_layout(store.get(ids, options),
                                   [sequences[i] for i in ids], terminated=True)
                 self.check_layout(store.sequential_get(0, len(sequences), options), sequences)
@@ -555,7 +682,7 @@ class PythonInterfaceTest(unittest.TestCase):
     # 重用带保护字节的缓冲，覆盖直接批读和直接顺读两条路径。
     def test_direct_outputs(self):
         ids = [5, 1, 0, 7, 1]
-        for mode in (aastore.StorageMode.ByteRange, aastore.StorageMode.PrefixMemory,
+        for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
             with self.open_store(mode) as store:
                 for backend in self.backends:

@@ -13,7 +13,7 @@
 #include <vector>
 
 // Random-access adapter shared by alignment and sequence export. MMseqs local
-// IDs stay separate from AAStore physical IDs so createsubdb views can reuse
+// IDs stay separate from RabbitAAStore physical IDs so createsubdb views can reuse
 // one external store without rewriting sequence data.
 class AAStoreTargetReader : public MemoryTracker {
 public:
@@ -86,14 +86,14 @@ public:
     void open(const std::string& path,
               const aastore::StoreOptions& storeOptions,
               const aastore::ReadOptions& readOptions);
-    // 仅显式启用时读取数据库关联的 AAStore；默认保持原生读取。
+    // 仅显式启用时读取数据库关联的 RabbitAAStore；默认保持原生读取。
     bool openForDatabase(const std::string& database,
                          size_t computeThreads = 1,
                          uint64_t stageMemoryReserve = 0,
                          bool enabled = false,
                          bool preferRecordFields = false,
                          uint64_t recordSafetyReserve = 0);
-    // Scoring uses AAStore metadata and a compact subset membership file;
+    // Scoring uses RabbitAAStore metadata and a compact subset membership file;
     // it does not load a native sequence DBReader/index.
     bool openForScoring(const std::string& database,
                         size_t computeThreads = 1,
@@ -107,7 +107,7 @@ public:
     bool headerDescriptionsEnabled() const noexcept;
 
     // Certified record columns retain either raw native-header separators or
-    // the default AAStore name/description fields.
+    // the default RabbitAAStore name/description fields.
     static bool hasNativeRecordHeaders(const std::string& database);
     bool recordsEnabled() const noexcept;
     bool recordsDenseIds() const noexcept;

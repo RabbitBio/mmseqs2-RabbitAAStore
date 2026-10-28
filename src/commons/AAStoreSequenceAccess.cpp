@@ -51,7 +51,7 @@ char* AAStoreSequenceAccess::sequence(
         if (store_.fullMemory()) {
             if (checkFullMemoryLength_ &&
                 store_.sequenceLength(id) > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
-                throw std::length_error("AAStore sequence exceeds alignment length range");
+                throw std::length_error("RabbitAAStore sequence exceeds alignment length range");
             }
             store_.get(id, scratch);
             length = scratch.size();
@@ -59,7 +59,7 @@ char* AAStoreSequenceAccess::sequence(
         }
         std::string_view view;
         if (!batch_.sequences.view(id, view)) {
-            throw std::logic_error("Sequence is missing from AAStore query batch");
+            throw std::logic_error("Sequence is missing from RabbitAAStore query batch");
         }
         length = view.size();
         return const_cast<char*>(view.data());
@@ -94,7 +94,7 @@ void AAStoreSequenceAccess::accumulateStats(Stats& total, const Stats& worker) {
 void AAStoreSequenceAccess::logStats(const char* stage, const std::vector<Stats>& workers) {
     Stats total;
     for (const Stats& worker : workers) accumulateStats(total, worker);
-    Debug(Debug::INFO) << "AAStore " << stage << " batches=" << total.batches
+    Debug(Debug::INFO) << "RabbitAAStore " << stage << " batches=" << total.batches
         << " candidate_occurrences=" << total.candidateOccurrences
         << " max_candidate_bytes=" << total.maxCandidateBytes
         << " ranges=" << total.io.ranges << " read_bytes=" << total.io.read_bytes
@@ -114,14 +114,14 @@ AAStoreQueryBatches::AAStoreQueryBatches(
     : store_(store), candidates_(candidates),
       sameQueries_(sameQueries), next_(begin), end_(end), batchBytes_(batchBytes) {
     if (batchBytes == 0 || begin > end || end > candidates.getSize()) {
-        throw std::invalid_argument("Invalid AAStore query batch range or threshold");
+        throw std::invalid_argument("Invalid RabbitAAStore query batch range or threshold");
     }
 }
 
 bool AAStoreQueryBatches::next(AAStoreSequenceAccess& worker) {
     try {
         if (!worker.batched() || &worker.store_ != &store_) {
-            throw std::logic_error("AAStore batch worker uses a different database");
+            throw std::logic_error("RabbitAAStore batch worker uses a different database");
         }
         uint64_t bytes = 0;
         uint64_t occurrences = 0;

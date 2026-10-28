@@ -1,18 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
+include("${CMAKE_CURRENT_LIST_DIR}/test_helpers.cmake")
+
 foreach(required AASTORE_SOURCE_DIR AASTORE_TEST_BINARY_DIR AASTORE_TEST_CXX_COMPILER
                  AASTORE_TEST_GENERATOR AASTORE_TEST_CTEST AASTORE_TEST_SYSTEM_NAME)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "Missing ${required}")
     endif()
 endforeach()
-function(run_checked)
-    execute_process(COMMAND ${ARGV} RESULT_VARIABLE result
-        OUTPUT_VARIABLE output ERROR_VARIABLE error)
-    if(NOT result EQUAL 0)
-        message(FATAL_ERROR "${ARGV}\n${output}\n${error}")
-    endif()
-endfunction()
 
 # A same-architecture cross build exercises both branches without requiring a
 # second compiler. Toolchain and emulator paths intentionally contain spaces.
@@ -55,6 +50,11 @@ else()
     set(CMAKE_CXX_COMPILER_ARG1 "-DAASTORE_CROSS_COMPILER_ARGUMENT=1")
     set(CMAKE_CXX_FLAGS [==[@AASTORE_TEST_CXX_FLAGS@ -DAASTORE_CROSS_TOOLCHAIN=1 -include "@case_dir@/runtime marker.hpp"]==])
     set(CMAKE_CROSSCOMPILING_EMULATOR [==[@fixture_emulator@]==])
+endif()
+# CMake 3.20 derives ARG1 from the compiler list during compiler detection.
+# The consumer uses only the argument inherited from the producer's cache.
+if(CMAKE_CXX_COMPILER_ARG1)
+    list(APPEND CMAKE_CXX_COMPILER "${CMAKE_CXX_COMPILER_ARG1}")
 endif()
 ]====])
 set(runtime_marker_template [====[
@@ -114,12 +114,12 @@ foreach(mode IN ITEMS without-emulator with-emulator)
     if(NOT "${AASTORE_TEST_GENERATOR_TOOLSET}" STREQUAL "")
         list(APPEND generator_args -T "${AASTORE_TEST_GENERATOR_TOOLSET}")
     endif()
-    run_checked("${CMAKE_COMMAND}" -S "${AASTORE_SOURCE_DIR}" -B "${producer_build}"
+    aastore_test_run_checked("${CMAKE_COMMAND}" -S "${AASTORE_SOURCE_DIR}" -B "${producer_build}"
         ${generator_args} "-DCMAKE_TOOLCHAIN_FILE=toolchains/cross toolchain.cmake"
         -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DAASTORE_BUILD_TESTS=ON
         -DAASTORE_BUILD_TOOLS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF -DAASTORE_BUILD_PYTHON=OFF
         -DAASTORE_ENABLE_IO_URING=OFF -DAASTORE_ENABLE_IPO=OFF)
-    run_checked("${CMAKE_COMMAND}" --build "${producer_build}"
+    aastore_test_run_checked("${CMAKE_COMMAND}" --build "${producer_build}"
         --config Release --target aastore --parallel 2)
     execute_process(COMMAND "${AASTORE_TEST_CTEST}" -C Release
         -R "^aastore_install_consumer$" --output-on-failure

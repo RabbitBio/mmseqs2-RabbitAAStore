@@ -89,7 +89,7 @@ int doRescorediagonal(Parameters &par,
     if (useAAStore && !Parameters::isEqualDbtype(
             targetSeqType, Parameters::DBTYPE_AMINO_ACIDS)) {
         throw std::runtime_error(
-            "AAStore rescorediagonal supports amino-acid databases only");
+            "RabbitAAStore rescorediagonal supports amino-acid databases only");
     }
     if (par.wrappedScoring)
     {
@@ -139,7 +139,7 @@ int doRescorediagonal(Parameters &par,
         flushSize = resultReader.getSize();
     }
     if (useAAStore) {
-        Debug(Debug::INFO) << "AAStore rescorediagonal: "
+        Debug(Debug::INFO) << "RabbitAAStore rescorediagonal: "
             << (aaStoreDirect ? "full-memory thread-local get" : "candidate-byte batches")
             << " candidate_bytes_per_batch=" << AAStoreTargetReader::kThreadBatchBytes
             << " threads=" << par.threads << "\n";

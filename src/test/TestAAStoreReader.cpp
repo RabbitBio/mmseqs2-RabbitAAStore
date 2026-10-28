@@ -43,7 +43,7 @@ void check_memory_budget() {
             budget.remainingPool - budget.cacheBytes ||
         budget.memoryReserve + budget.cacheBytes +
             budget.pageCacheReserve != budget.memoryAvailable) {
-        throw std::runtime_error("incorrect AAStore memory budget");
+        throw std::runtime_error("incorrect RabbitAAStore memory budget");
     }
 
     const auto constrained = aastore_memory::plan(
@@ -53,7 +53,7 @@ void check_memory_budget() {
         constrained.memoryReserve + constrained.cacheBytes +
             constrained.pageCacheReserve > constrained.memoryAvailable) {
         throw std::runtime_error(
-            "AAStore budget exceeded constrained memory");
+            "RabbitAAStore budget exceeded constrained memory");
     }
 
     const auto nrAll = aastore_memory::plan(
@@ -62,7 +62,7 @@ void check_memory_budget() {
         UINT64_C(104296337899));
     if (nrAll.cacheBytes != UINT64_C(34200354816)) {
         throw std::runtime_error(
-            "AAStore nr_all memory budget changed unexpectedly");
+            "RabbitAAStore nr_all memory budget changed unexpectedly");
     }
 
     if (aastore_memory::plan(
@@ -70,7 +70,7 @@ void check_memory_budget() {
         aastore_memory::plan(
             16 * gib, 12 * gib, maximum, maximum, maximum).cacheBytes != 0) {
         throw std::runtime_error(
-            "exhausted reserves enabled an AAStore prefix");
+            "exhausted reserves enabled a RabbitAAStore prefix");
     }
 }
 
@@ -124,7 +124,7 @@ void check_batch(
             sequence != source[keys[id]] ||
             sequence.data()[sequence.size()] != '\0') {
             throw std::runtime_error(
-                "AAStore random batch returned a wrong sequence");
+                "RabbitAAStore random batch returned a wrong sequence");
         }
     }
     if (batch.physicalIds.size() != 4 ||
@@ -134,7 +134,7 @@ void check_batch(
         batch.sequences.fetched.stats.io_queue_depth >
             AAStoreTargetReader::threadBatchQueueDepth(threads)) {
         throw std::runtime_error(
-            "AAStore random batch violated its thread budget");
+            "RabbitAAStore random batch violated its thread budget");
     }
 
     const char* arena = batch.sequences.fetched.storage.data();
@@ -143,14 +143,14 @@ void check_batch(
     reader.fetch_into(batch, threads);
     if (batch.sequences.fetched.storage.data() != arena ||
         batch.sequences.fetched.storage.size() > arenaBytes) {
-        throw std::runtime_error("AAStore smaller batch did not reuse its output arena");
+        throw std::runtime_error("RabbitAAStore smaller batch did not reuse its output arena");
     }
     for (const size_t id : batch.ids) {
         std::string_view sequence;
         if (!batch.sequences.view(id, sequence) ||
             sequence != source[keys[id]] ||
             sequence.data()[sequence.size()] != '\0') {
-            throw std::runtime_error("AAStore reused batch returned a wrong sequence");
+            throw std::runtime_error("RabbitAAStore reused batch returned a wrong sequence");
         }
     }
 
@@ -161,7 +161,7 @@ void check_batch(
         batch.sequences.fetched.storage.data() != arena ||
         !batch.sequences.fetched.empty() ||
         batch.sequences.fetched.stats.requested_sequences != 0) {
-        throw std::runtime_error("AAStore empty batch retained old views");
+        throw std::runtime_error("RabbitAAStore empty batch retained old views");
     }
 }
 
@@ -170,7 +170,7 @@ void check_scoring_views(const std::filesystem::path& directory,
                          const std::string& database,
                          const std::vector<std::string>& source) {
     // This fixture has no native sequence payload or .index. Fresh full-store
-    // associations must use stable AAStore keys without rebuilding an index.
+    // associations must use stable RabbitAAStore keys without rebuilding an index.
     AAStoreTargetReader full;
     if (!full.openForScoring(database, 4, 0, true) || full.size() != source.size())
         throw std::runtime_error("full scoring view depended on a native index");
@@ -206,7 +206,7 @@ void check_scoring_views(const std::filesystem::path& directory,
         throw std::runtime_error("subset scoring view admitted a nonmember key");
     check_batch(view, source, keys, 4);
 
-    // Native createsubdb retains repeated index rows. AAStore's compact view
+    // Native createsubdb retains repeated index rows. RabbitAAStore's compact view
     // keeps those local rows and uses the first row for a key lookup as well.
     const std::string repeatedSubset = (directory / "repeated_subset").string();
     AAStoreTargetReader::associateSubsetDatabase(repeatedSubset, store, {5, 0, 5});
@@ -221,7 +221,7 @@ void check_scoring_views(const std::filesystem::path& directory,
         throw std::runtime_error("subset scoring view changed native repeated-key semantics");
     }
     // A view may have more local rows than physical sequences when repeated
-    // selections are present, without expanding the shared AAStore itself.
+    // selections are present, without expanding the shared RabbitAAStore itself.
     AAStoreTargetReader::associateSubsetDatabase(repeatedSubset, store,
         std::vector<uint32_t>(source.size() + 1, 5));
     AAStoreTargetReader extraRows;
@@ -269,7 +269,7 @@ int main() {
         AAStoreTargetReader::accumulateIoStats(ioStats, {});
         if (ioStats.ranges != 6 || ioStats.read_bytes != 8192 ||
             ioStats.io_submissions != 8) {
-            throw std::runtime_error("incorrect AAStore I/O counters");
+            throw std::runtime_error("incorrect RabbitAAStore I/O counters");
         }
         for (const auto& setting :
              std::vector<std::pair<size_t, size_t>>{
@@ -278,7 +278,7 @@ int main() {
             if (AAStoreTargetReader::threadBatchQueueDepth(
                     setting.first) != setting.second) {
                 throw std::runtime_error(
-                    "wrong AAStore per-thread queue depth");
+                    "wrong RabbitAAStore per-thread queue depth");
             }
         }
         for (const size_t threads : {size_t{0}, size_t{513}}) {
@@ -290,7 +290,7 @@ int main() {
             }
             if (!rejected) {
                 throw std::runtime_error(
-                    "invalid AAStore compute-thread count accepted");
+                    "invalid RabbitAAStore compute-thread count accepted");
             }
         }
 
@@ -309,7 +309,7 @@ int main() {
         if (AAStoreTargetReader::associatedStorePath(database) !=
             std::filesystem::absolute(store).lexically_normal().string()) {
             throw std::runtime_error(
-                "AAStore database association was not preserved");
+                "RabbitAAStore database association was not preserved");
         }
         check_scoring_views(directory, store, database, source);
 
@@ -317,11 +317,10 @@ int main() {
         for (const auto backend :
              {aastore::IoBackend::Pread, aastore::IoBackend::IoUring}) {
             for (const auto mode :
-                 {aastore::StorageMode::ByteRange,
-                  aastore::StorageMode::PrefixMemory}) {
+                 {aastore::StorageMode::NoMemory,
+                  aastore::StorageMode::PartialMemory}) {
                 aastore::StoreOptions options;
-                options.storage_mode = mode;
-                options.cache_bytes = 7;
+                options.preload_bytes = mode == aastore::StorageMode::PartialMemory ? 7 : 0;
                 aastore::ReadOptions reads;
                 reads.io_backend = backend;
                 reads.merge_gap_bytes = 0;
@@ -357,7 +356,7 @@ int main() {
         }
 
         aastore::StoreOptions fullOptions;
-        fullOptions.storage_mode = aastore::StorageMode::FullMemory;
+        fullOptions.preload_bytes = UINT64_MAX;
         aastore::ReadOptions reads;
         AAStoreTargetReader direct;
         direct.open(store, fullOptions, reads);
@@ -366,7 +365,7 @@ int main() {
         for (const uint32_t key : keys) total += source[key].size();
         if (!direct.fullMemory() || direct.totalLength() != total) {
             throw std::runtime_error(
-                "AAStore FullMemory view has wrong metadata");
+                "RabbitAAStore FullMemory view has wrong metadata");
         }
 
         std::string decoded;
@@ -375,20 +374,20 @@ int main() {
             if (decoded != source[keys[id]] ||
                 direct.sequenceLength(id) != decoded.size()) {
                 throw std::runtime_error(
-                    "AAStore FullMemory direct read failed");
+                    "RabbitAAStore FullMemory direct read failed");
             }
         }
 
         {
             AAStoreTargetReader native;
             if (native.openForDatabase(database, 4)) {
-                throw std::runtime_error("AAStore was enabled without explicit opt-in");
+                throw std::runtime_error("RabbitAAStore was enabled without explicit opt-in");
             }
 
             AAStoreTargetReader associated;
             if (!associated.openForDatabase(database, 4, 0, true)) {
                 throw std::runtime_error(
-                    "AAStore associated random reader did not open");
+                    "RabbitAAStore associated random reader did not open");
             }
             associated.mapFromMMseqsKeys(keys);
             check_batch(associated, source, keys, 4);
@@ -406,7 +405,7 @@ int main() {
             AAStoreTargetReader missing;
             if (missing.openForDatabase((directory / "missing").string(), 4, 0, true)) {
                 throw std::runtime_error(
-                    "unassociated database unexpectedly enabled AAStore");
+                    "unassociated database unexpectedly enabled RabbitAAStore");
             }
 
             {
@@ -432,7 +431,7 @@ int main() {
 
         std::filesystem::remove_all(directory);
         std::cout
-            << "AAStore sequence/records memory budgets, association, random batches, "
+            << "RabbitAAStore sequence/records memory budgets, association, random batches, "
                "ID views, pread/io_uring, and FullMemory direct reads: passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what()

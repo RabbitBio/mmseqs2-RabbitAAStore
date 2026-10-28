@@ -1,4 +1,4 @@
-"""Check AAStore index loading modes and native workflow parameter forwarding."""
+"""Check RabbitAAStore index loading modes and native workflow parameter forwarding."""
 import argparse
 import json
 from pathlib import Path

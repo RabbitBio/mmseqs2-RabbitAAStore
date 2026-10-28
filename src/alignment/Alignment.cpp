@@ -167,7 +167,7 @@ Alignment::Alignment(const std::string &querySeqDB, const std::string &targetSeq
     Debug(Debug::INFO) << "Target database size: " << targetSize << " type: " << Parameters::getDbTypeName(targetSeqType) << "\n";
     if (useAAStoreTarget) {
         if (!Parameters::isEqualDbtype(targetSeqType, Parameters::DBTYPE_AMINO_ACIDS)) {
-            throw std::runtime_error("AAStore alignment targets must be amino-acid sequences");
+            throw std::runtime_error("RabbitAAStore alignment targets must be amino-acid sequences");
         }
     }
     prefdbr = new DBReader<unsigned int>(prefDB.c_str(), prefDBIndex.c_str(), threads, DBReader<unsigned int>::USE_DATA|DBReader<unsigned int>::USE_INDEX);
@@ -313,7 +313,7 @@ void Alignment::run(const std::string &outDB, const std::string &outDBIndex, con
     size_t totalPassedNum = 0;
     std::vector<AAStoreSequenceAccess::Stats> sequenceStats(threads);
     if (useAAStoreTarget) {
-        Debug(Debug::INFO) << "AAStore alignment: "
+        Debug(Debug::INFO) << "RabbitAAStore alignment: "
             << (aaStoreDirect ? "full-memory thread-local get" : "candidate-byte batches")
             << " candidate_bytes_per_batch=" << AAStoreTargetReader::kThreadBatchBytes
             << " threads=" << threads << " query=" << (sameQTDB ? "aastore" : "native")

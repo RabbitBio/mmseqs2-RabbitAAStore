@@ -1,4 +1,4 @@
-"""Check header-free AAStore construction and complete cluster workflows."""
+"""Check header-free RabbitAAStore construction and complete cluster workflows."""
 import argparse
 from collections import Counter
 import gzip
@@ -68,7 +68,7 @@ def main():
             check(label + '_default_' + name, same_file(store / name, default_store / name))
         check(label + '_lookup_matches', Path(str(native) + '.lookup').read_bytes() == Path(str(aa) + '.lookup').read_bytes())
         check(label + '_index_matches', Path(str(native) + '.index').read_bytes() == Path(str(aa) + '.index').read_bytes())
-        # The default AAStore representation normalizes the name/description
+        # The default RabbitAAStore representation normalizes the name/description
         # separator. Format native oracle headers the same way; keep the
         # original sequence payload and ID order for independent exports.
         header_path = Path(str(native) + '_h')
@@ -83,7 +83,7 @@ def main():
         run(label + '_native_flat', ['result2flat', native, native, body, expected_all, '-v', 0])
         log = run(label + '_direct_all', ['aastoreexportfasta', aa, clusters, actual_all, '--aastore', 1, '--threads', 4, '-v', 3])
         check(label + '_all_bytewise', same_file(expected_all, actual_all))
-        check(label + '_all_records_backend', 'batch_get_records fields=all header=AAStore' in log)
+        check(label + '_all_records_backend', 'batch_get_records fields=all header=RabbitAAStore' in log)
         rep_body, expected_rep, actual_rep = (root / (label + suffix) for suffix in ('_rep_body', '_expected_rep.fa', '_rep.fa'))
         run(label + '_native_rep', ['result2repseq', native, clusters, rep_body, '--threads', 1, '-v', 0])
         run(label + '_native_rep_flat', ['result2flat', native, native, rep_body, expected_rep, '--use-fasta-header', 1, '-v', 0])
@@ -244,7 +244,7 @@ def main():
         directory = (temporary / 'latest').resolve()
         check(module + '_no_header_db', not list(directory.glob('input_h*')))
         check(module + '_no_ascii_intermediates', not list(directory.glob('clu_rep*')) and not list(directory.glob('clu_seqs*')))
-        check(module + '_two_direct_exports', log.count('AAStore aastoreexportfasta: batch_get_records fields=all') == 2)
+        check(module + '_two_direct_exports', log.count('RabbitAAStore aastoreexportfasta: batch_get_records fields=all') == 2)
         for suffix in ('_cluster.tsv', '_rep_seq.fasta', '_all_seqs.fasta'):
             check(module + suffix, Path(str(output) + suffix).stat().st_size > 0)
     cleanup_output, cleanup_tmp = root / 'cleanup_result', root / 'cleanup_tmp'

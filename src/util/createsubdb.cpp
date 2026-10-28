@@ -34,7 +34,7 @@ int createsubdb(int argc, const char **argv, const Command& command) {
         aaStorePath = AAStoreTargetReader::associatedStorePath(par.db2);
     } catch (const std::exception& error) {
         // 关联只用于传递元数据，损坏的关联不应阻止原生子库创建。
-        Debug(Debug::WARNING) << "Skipping AAStore association: " << error.what() << "\n";
+        Debug(Debug::WARNING) << "Skipping RabbitAAStore association: " << error.what() << "\n";
     }
     int dbMode = DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA;
     if (lookupMode) {
@@ -48,14 +48,14 @@ int createsubdb(int argc, const char **argv, const Command& command) {
     if (aaStorePath.empty()) {
         try {
             if (std::filesystem::exists(par.db3 + ".aastore")) {
-                Debug(Debug::ERROR) << "Output retains an AAStore directory: " << par.db3
+                Debug(Debug::ERROR) << "Output retains a RabbitAAStore directory: " << par.db3
                     << ".aastore; use a fresh output path\n";
                 EXIT(EXIT_FAILURE);
             }
             std::filesystem::remove(par.db3 + ".aastore.path");
             std::filesystem::remove(par.db3 + ".aastore.ids");
         } catch (const std::exception& error) {
-            Debug(Debug::ERROR) << "Cannot clear stale AAStore output association: " << error.what() << "\n";
+            Debug(Debug::ERROR) << "Cannot clear stale RabbitAAStore output association: " << error.what() << "\n";
             EXIT(EXIT_FAILURE);
         }
     }
@@ -109,7 +109,7 @@ int createsubdb(int argc, const char **argv, const Command& command) {
         }
     }
     // All source records are copied or indexed now. Release the native index
-    // before sorting output or opening the shared AAStore metadata.
+    // before sorting output or opening the shared RabbitAAStore metadata.
     reader.close();
     // merge any kind of sequence database
     const bool shouldMerge = Parameters::isEqualDbtype(sourceDbtype, Parameters::DBTYPE_HMM_PROFILE)
@@ -124,7 +124,7 @@ int createsubdb(int argc, const char **argv, const Command& command) {
             AAStoreTargetReader::associateSubsetDatabase(par.db3, aaStorePath,
                                                          std::move(aaStoreMembers));
         } catch (const std::exception& error) {
-            Debug(Debug::ERROR) << "Cannot write AAStore subset membership: " << error.what() << "\n";
+            Debug(Debug::ERROR) << "Cannot write RabbitAAStore subset membership: " << error.what() << "\n";
             EXIT(EXIT_FAILURE);
         }
     }

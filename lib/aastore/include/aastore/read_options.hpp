@@ -38,9 +38,11 @@ constexpr bool has_field(RecordFields fields, RecordFields field) {
     return (fields & field) != RecordFields::None;
 }
 
+// 开库时根据 preload_bytes 自动确定的编码序列驻留状态。
+// NoMemory 只表示不主动预载序列，索引和读取缓冲仍可占用内存。
 enum class StorageMode : uint8_t {
-    ByteRange = 0,
-    PrefixMemory = 1,
+    NoMemory = 0,
+    PartialMemory = 1,
     FullMemory = 3
 };
 
@@ -50,9 +52,9 @@ enum class IndexLoadMode : uint8_t {
 };
 
 struct StoreOptions {
-    StorageMode storage_mode = StorageMode::ByteRange;
-    // PrefixMemory 常驻 packed 前缀的字节上限。
-    uint64_t cache_bytes = 0;
+    // 编码序列预载的字节预算，不包含索引、文本列或解码输出。
+    // 0 不预载；不足全量时预载固定前缀；足够时自动使用全内存读取。
+    uint64_t preload_bytes = 0;
     // 预加载的最大工作线程数，包含调用线程。
     size_t threads = 8;
     // 打开时将完整名称正文读入 Store 持有的内存，后续名称批读不访问正文文件。
@@ -62,7 +64,7 @@ struct StoreOptions {
     // 序列、名称和描述的边界索引：只读映射，或完整读入自有内存。
     IndexLoadMode index_load_mode = IndexLoadMode::Mmap;
 
-    // 校验存储模式、索引加载方式及前缀预算；零线程保留现有的单线程语义。
+    // 校验索引加载方式；所有预载预算有效，零线程保留单线程语义。
     void validate() const;
 };
 

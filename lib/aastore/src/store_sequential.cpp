@@ -73,7 +73,7 @@ void prepare_sequential_layout(const Metadata* metadata,
     batch->offsets.resize(count);
     batch->lengths.resize(count);
     batch->stats.full_memory = storage_mode == StorageMode::FullMemory;
-    batch->stats.prefix_memory = storage_mode == StorageMode::PrefixMemory;
+    batch->stats.prefix_memory = storage_mode == StorageMode::PartialMemory;
     batch->stats.requested_sequences = count;
 
     state->residue_begin = metadata->start_position(first_sequence);
@@ -131,7 +131,7 @@ std::vector<PackedBuffer>& prepare_sequential_buffers(
         const PackedByteExtent extent = packed_byte_extent(
             SequenceRequest{0, 0, state.residue_begin + begin, end - begin});
         if (store.storage_mode == StorageMode::FullMemory ||
-            (store.storage_mode == StorageMode::PrefixMemory &&
+            (store.storage_mode == StorageMode::PartialMemory &&
              extent.end <= store.prefix_packed_bytes)) {
             continue;
         }
@@ -280,7 +280,7 @@ void sequential_get_from_store(const StoreReadContext& store,
                 }
                 packed = store.full_packed;
                 packed_end = store.full_packed_bytes;
-            } else if (store.storage_mode == StorageMode::PrefixMemory &&
+            } else if (store.storage_mode == StorageMode::PartialMemory &&
                        extent.end <= store.prefix_packed_bytes) {
                 packed = store.prefix_packed;
                 packed_end = store.prefix_packed_bytes;

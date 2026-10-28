@@ -37,7 +37,7 @@ if(AASTORE_RUN_SMOKE_TESTS)
             --verbose --output-on-failure -R "^aastore_smoke_"
         DEPENDS ${_aastore_smoke_dependencies}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        COMMENT "Running AAStore environment smoke tests"
+        COMMENT "Running RabbitAAStore environment smoke tests"
         VERBATIM USES_TERMINAL)
 endif()
 unset(_aastore_smoke_dependencies)

@@ -1,4 +1,4 @@
-// 文件职责：定义 AAStore 的读取接口、结果批次和可复用输出缓冲。
+// 文件职责：定义 RabbitAAStore 的读取接口、结果批次和可复用输出缓冲。
 // Store 管理数据库资源，Batch、TextBatch 和 RecordBatch 提供结果访问及生命周期约定。
 #ifndef AASTORE_STORE_HPP
 #define AASTORE_STORE_HPP
@@ -178,7 +178,7 @@ private:
 
 class Store {
 public:
-    // 打开数据库，按存储和文本选项建立映射或预加载缓存。
+    // 打开数据库，按预载预算自动选择序列驻留模式，并应用索引和文本选项。
     explicit Store(const std::filesystem::path& path,
                    const StoreOptions& options = {});
     // 释放数据库文件、映射和缓存；调用方须先结束借用它们的读取操作。
@@ -199,7 +199,7 @@ public:
     uint64_t total_residues() const noexcept;
     // 返回 packed 数据的预期有效字节数。
     uint64_t packed_bytes() const noexcept;
-    // 返回当前配置的序列存储模式。
+    // 返回根据预载预算和编码序列大小自动选择的驻留模式。
     StorageMode storage_mode() const noexcept;
     // 返回序列及文本边界索引的加载方式，与正文存储模式独立。
     IndexLoadMode index_load_mode() const noexcept;

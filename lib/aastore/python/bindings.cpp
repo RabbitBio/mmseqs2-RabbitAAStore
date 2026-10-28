@@ -293,8 +293,8 @@ py::list record_slice(const RecordBatch& records, const py::slice& slice) {
 // 定义选项和枚举；Python 建库统一使用 threads，映射到 C++ 的 encode_threads。
 void bind_options(py::module_& module) {
     py::enum_<StorageMode>(module, "StorageMode")
-        .value("ByteRange", StorageMode::ByteRange)
-        .value("PrefixMemory", StorageMode::PrefixMemory)
+        .value("NoMemory", StorageMode::NoMemory)
+        .value("PartialMemory", StorageMode::PartialMemory)
         .value("FullMemory", StorageMode::FullMemory);
     py::enum_<IndexLoadMode>(module, "IndexLoadMode")
         .value("Mmap", IndexLoadMode::Mmap)
@@ -320,18 +320,16 @@ void bind_options(py::module_& module) {
         .def_readwrite("overwrite", &BuildOptions::overwrite)
         .def_readwrite("write_names", &BuildOptions::write_names)
         .def_readwrite("write_descriptions", &BuildOptions::write_descriptions);
-    py::class_<StoreOptions>(module, "StoreOptions", "Storage mode, preload budget, text residency and index loading.")
-        .def(py::init([](StorageMode mode, uint64_t cache, size_t threads, bool names,
+    py::class_<StoreOptions>(module, "StoreOptions", "Sequence preload budget, text residency and index loading; storage mode is automatic.")
+        .def(py::init([](uint64_t preload, size_t threads, bool names,
                          bool descriptions, IndexLoadMode indexes) {
-            return StoreOptions{mode, cache, threads, names, descriptions, indexes};
-        }), py::kw_only(), py::arg("storage_mode") = StorageMode::ByteRange,
-            py::arg("cache_bytes") = 0, py::arg("threads") = 8,
+            return StoreOptions{preload, threads, names, descriptions, indexes};
+        }), py::kw_only(), py::arg("preload_bytes") = 0, py::arg("threads") = 8,
             py::arg("resident_names") = false, py::arg("resident_descriptions") = false,
             py::arg("index_load_mode") = IndexLoadMode::Mmap)
         .def("validate", &StoreOptions::validate,
              "Validate storage settings without opening files; invalid settings raise ValueError.")
-        .def_readwrite("storage_mode", &StoreOptions::storage_mode)
-        .def_readwrite("cache_bytes", &StoreOptions::cache_bytes)
+        .def_readwrite("preload_bytes", &StoreOptions::preload_bytes)
         .def_readwrite("threads", &StoreOptions::threads)
         .def_readwrite("resident_names", &StoreOptions::resident_names)
         .def_readwrite("resident_descriptions", &StoreOptions::resident_descriptions)
@@ -452,6 +450,10 @@ void bind_store(py::module_& module) {
         .def_property_readonly("has_descriptions", [](const PythonStore& self) { return self.acquire()->has_descriptions(); })
         .def_property_readonly("decode_kernel_name", [](const PythonStore& self) { return self.acquire()->decode_kernel_name(); })
         .def("sequence_length", [](const PythonStore& self, SequenceId id) { return self.acquire()->sequence_length(id); }, py::arg("id"))
+        .def("name_length", [](const PythonStore& self, SequenceId id) { return self.acquire()->name_length(id); }, py::arg("id"),
+             "Return the stored name length in bytes from its index, without reading the text body.")
+        .def("description_length", [](const PythonStore& self, SequenceId id) { return self.acquire()->description_length(id); }, py::arg("id"),
+             "Return the stored description length in bytes from its index, without reading the text body.")
         .def("get", [](const PythonStore& self, SequenceId id, ReadOptions options) {
             const auto store = self.acquire();
             py::gil_scoped_release release;
@@ -496,9 +498,9 @@ void bind_store(py::module_& module) {
 
 }  // namespace
 
-// 初始化 Python 扩展；建库和读取仍由原生 AAStore 实现。
+// 初始化 Python 扩展；建库和读取仍由原生 RabbitAAStore 实现。
 PYBIND11_MODULE(_aastore, module) {
-    module.doc() = "AAStore C++ bindings for compact FASTA storage";
+    module.doc() = "RabbitAAStore C++ bindings for compact FASTA storage";
     module.attr("__version__") = AASTORE_PYTHON_VERSION;
     bind_options(module);
     bind_stats(module);

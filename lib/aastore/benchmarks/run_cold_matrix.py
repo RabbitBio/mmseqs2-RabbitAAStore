@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 文件职责：按抽样比例、线程数和前缀驻留比例运行独立进程冷缓存实验。
 # 保存实验配置、逐例日志和 CSV，并检查同组请求及输出校验值一致。
-"""Paired, fresh-process AAStore random-access pilot. Standard library only."""
+"""Paired, fresh-process RabbitAAStore random-access pilot. Standard library only."""
 
 import argparse
 import csv
@@ -95,7 +95,7 @@ def main():
     parser.add_argument("--percents", nargs="+", type=percentage, default=["0.01", "0.1"])
     parser.add_argument("--threads", nargs="+", type=positive, default=[1, 8, 64])
     parser.add_argument("--prefix-percents", nargs="+", type=prefix_percentage, default=["0"],
-                        help="NonFull resident fractions of packed bytes; FullMemory is a separate case")
+                        help="Preload fractions below 100% of encoded bytes; a full-preload case is added automatically")
     parser.add_argument("--repeats", type=positive, default=1)
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--batch-bytes", type=positive, default=64 * 1024**2)
@@ -137,13 +137,15 @@ def main():
         "bench_sha256": hashlib.sha256(args.bench.read_bytes()).hexdigest(),
         "store_files": files, "records": records, "case_order": cases,
         "cold_scope": "packed.bin and meta.bin evicted and mincore-verified before each process opens Store",
-        "nonfull": "ByteRange at zero budget; PrefixMemory at positive budget",
+        "nonfull": "NoMemory at zero budget; PartialMemory at positive sub-full budget",
         "prefix_basis": "floor(metadata packed bytes * percent / 100), not record count",
-        "full": "FullMemory, preload included in service_ms", "packed_bytes": packed_bytes,
+        "full": "FullMemory from max(1, packed_bytes) preload budget; preload included in service_ms",
+        "resident_budget_bytes": "Expected resident encoded bytes; preload_bytes records the requested budget",
+        "packed_bytes": packed_bytes,
     }
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     fields = ["case", "repeat", "percent", "mode", "resident_percent", "resident_budget_bytes",
-              "threads", "status", "wall_s", "storage_mode", "packed_bytes", "prefix_budget_bytes",
+              "threads", "status", "wall_s", "storage_mode", "packed_bytes", "preload_bytes",
               "requests", "residues", "trace_hash_fnv1a64", "output_hash_fnv1a64",
               "cold_cache_verified", "batches_per_round", "max_batch_output_bytes",
               "open_ms", "preload_ms", "fetch_ms", "service_ms", "end_to_end_ms",
@@ -166,7 +168,10 @@ def main():
                        "--io-backend", args.backend, "--batch-bytes", str(args.batch_bytes),
                        "--io-buffer-bytes", str(args.io_buffer_bytes), "--queue-depth", str(args.queue_depth),
                        "--seed", str(args.seed + repeat), "--rounds", "1", "--drop-cache"]
-            command += ["--full-memory"] if mode == "full" else ["--memory-bytes", str(resident_budget)]
+            # An empty encoded file still needs a positive request to select
+            # FullMemory. Keep the expected residency separate from the budget.
+            preload_budget = max(1, packed_bytes) if mode == "full" else resident_budget
+            command += ["--memory-bytes", str(preload_budget)]
             (args.output / (case + ".command.json")).write_text(json.dumps(command) + "\n")
             # 保守的启动检查，并非对任意长度序列都成立的内存上界。
             sample_count = max(1, int(records * float(percent) / 100)) if records else 0
@@ -194,12 +199,15 @@ def main():
                 try:
                     if metrics["cold_cache_verified"] != "1":
                         raise ValueError("cache was not verified cold")
-                    expected_mode = "full_memory" if mode == "full" else (
-                        "prefix_memory" if resident_budget else "byte_range")
+                    expected_mode = ("no_memory" if preload_budget == 0 else
+                                     "full_memory" if preload_budget >= packed_bytes else
+                                     "partial_memory")
                     if metrics["storage_mode"] != expected_mode:
                         raise ValueError("unexpected storage mode")
-                    if int(metrics["resident_bytes"]) != resident_budget:
-                        raise ValueError("resident bytes differ from configured budget")
+                    if int(metrics["preload_bytes"]) != preload_budget:
+                        raise ValueError("preload budget differs from requested budget")
+                    if int(metrics["resident_bytes"]) != min(preload_budget, packed_bytes):
+                        raise ValueError("resident bytes differ from expected residency")
                     expected_backend = "io_uring" if args.backend == "uring" else "pread"
                     if int(metrics["ranges"]) and metrics["active_io_backend"] != expected_backend:
                         raise ValueError("backend fell back")

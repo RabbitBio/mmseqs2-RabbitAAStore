@@ -34,7 +34,7 @@ std::string resolved_store_path(const std::string& store) {
 uint64_t metadata_mtime_ns(const std::string& store) {
     struct stat metadata;
     if (::stat((std::filesystem::path(store) / "meta.bin").c_str(), &metadata) != 0) {
-        throw std::runtime_error("cannot stat AAStore metadata: " + store);
+        throw std::runtime_error("cannot stat RabbitAAStore metadata: " + store);
     }
     return static_cast<uint64_t>(metadata.st_mtim.tv_sec) * UINT64_C(1000000000) +
         static_cast<uint64_t>(metadata.st_mtim.tv_nsec);
@@ -57,7 +57,7 @@ void write_association(const std::string& database, const std::string& store,
         output << resolvedStore << '\n'
                << (subset ? kSubsetAssociation : kFullAssociation) << '\n';
         output.close();
-        if (!output) throw std::runtime_error("cannot write AAStore association: " + locator.string());
+        if (!output) throw std::runtime_error("cannot write RabbitAAStore association: " + locator.string());
         fs::rename(temporary, locator);
     } catch (...) {
         std::error_code ignored;
@@ -74,7 +74,7 @@ std::string association_layout(const std::string& database) {
     std::getline(input, layout);
     if (!layout.empty() && layout.back() == '\r') layout.pop_back();
     if (!layout.empty() && layout != kFullAssociation && layout != kSubsetAssociation) {
-        throw std::runtime_error("unsupported AAStore database association layout");
+        throw std::runtime_error("unsupported RabbitAAStore database association layout");
     }
     return layout;
 }
@@ -88,7 +88,7 @@ struct SubsetHeader {
     uint64_t metaMtimeNs = 0;
     uint64_t pathBytes = 0;
 };
-static_assert(sizeof(SubsetHeader) == 7 * sizeof(uint64_t), "AAStore subset header padding");
+static_assert(sizeof(SubsetHeader) == 7 * sizeof(uint64_t), "RabbitAAStore subset header padding");
 
 SubsetHeader read_subset_header(std::ifstream& input, std::string& storePath) {
     char magic[8] = {};
@@ -98,12 +98,12 @@ SubsetHeader read_subset_header(std::ifstream& input, std::string& storePath) {
     if (!input || std::memcmp(magic, kSubsetMagic, sizeof(magic)) != 0 ||
         header.count > UINT_MAX ||
         header.pathBytes == 0 || header.pathBytes > 16384) {
-        throw std::runtime_error("invalid AAStore subset membership header");
+        throw std::runtime_error("invalid RabbitAAStore subset membership header");
     }
     storePath.resize(static_cast<size_t>(header.pathBytes));
     input.read(storePath.data(), static_cast<std::streamsize>(storePath.size()));
     if (!input || storePath.find('\0') != std::string::npos) {
-        throw std::runtime_error("invalid AAStore subset store path");
+        throw std::runtime_error("invalid RabbitAAStore subset store path");
     }
     return header;
 }
@@ -246,20 +246,20 @@ HeaderRecordsProof header_records_proof(const std::string& database,
     std::string line;
     if (!std::getline(marker, line) ||
         (line != "MMSEQS_AASTORE_HEADERS_V1" && line != "MMSEQS_AASTORE_HEADERS_V2")) {
-        throw std::runtime_error("invalid AAStore native-header certificate");
+        throw std::runtime_error("invalid RabbitAAStore native-header certificate");
     }
     const bool legacy = line == "MMSEQS_AASTORE_HEADERS_V1";
     const std::string layout = association_layout(database);
     if (std::filesystem::exists(database + ".aastore.ids") ||
         layout == kSubsetAssociation || (!legacy && layout != kFullAssociation)) {
-        throw std::runtime_error("AAStore record export requires an explicit full database view");
+        throw std::runtime_error("RabbitAAStore record export requires an explicit full database view");
     }
     std::unordered_map<std::string, std::string> fields;
     while (std::getline(marker, line)) {
         const size_t equal = line.find('=');
         if (equal == std::string::npos ||
             !fields.emplace(line.substr(0, equal), line.substr(equal + 1)).second) {
-            throw std::runtime_error("invalid AAStore native-header certificate field");
+            throw std::runtime_error("invalid RabbitAAStore native-header certificate field");
         }
     }
     const auto number = [&](const char* key) {
@@ -274,13 +274,13 @@ HeaderRecordsProof header_records_proof(const std::string& database,
     if (fields["header_newline"] != "excluded" ||
         (reconstruction != "name+description+newline" &&
          reconstruction != "name+space+description+newline")) {
-        throw std::runtime_error("unsupported AAStore record-header reconstruction");
+        throw std::runtime_error("unsupported RabbitAAStore record-header reconstruction");
     }
     proof.insertHeaderSpace = reconstruction == "name+space+description+newline";
     const uint64_t dense = number("dense_keys");
     if (dense > 1) throw std::runtime_error("invalid native-header key layout");
     if (legacy) {
-        // Verify the old source binding once before publishing an AAStore-only
+        // Verify the old source binding once before publishing a RabbitAAStore-only
         // certificate; an old one-line subset must not become a full view.
         struct stat indexStat;
         if (::stat((database + ".index").c_str(), &indexStat) != 0 ||
@@ -290,12 +290,12 @@ HeaderRecordsProof header_records_proof(const std::string& database,
             number("source_index_mtime_ns") !=
                 static_cast<uint64_t>(indexStat.st_mtim.tv_sec) * UINT64_C(1000000000) +
                 static_cast<uint64_t>(indexStat.st_mtim.tv_nsec)) {
-            throw std::runtime_error("legacy AAStore records need the original index for one-time certification upgrade");
+            throw std::runtime_error("legacy RabbitAAStore records need the original index for one-time certification upgrade");
         }
     }
     if (number("packed_size") != file_bytes(path / "packed.bin") ||
         number("sequence_meta_size") != file_bytes(path / "meta.bin")) {
-        throw std::runtime_error("AAStore record certificate no longer matches AAStore files");
+        throw std::runtime_error("RabbitAAStore record certificate no longer matches RabbitAAStore files");
     }
     std::ifstream metadata(path / "meta.bin", std::ios::binary);
     char magic[8] = {};
@@ -305,7 +305,7 @@ HeaderRecordsProof header_records_proof(const std::string& database,
     metadata.read(reinterpret_cast<char*>(&records), sizeof(records));
     if (!metadata || std::memcmp(magic, "AAPCMP3\0", 8) != 0 || version != 3 ||
         records != number("records")) {
-        throw std::runtime_error("AAStore native-header certificate sequence count differs");
+        throw std::runtime_error("RabbitAAStore native-header certificate sequence count differs");
     }
     for (const auto pair : {std::pair<const char*, const char*>{"packed", "packed.bin"},
              {"sequence_meta", "meta.bin"}, {"names_meta", "names.meta"},
@@ -313,7 +313,7 @@ HeaderRecordsProof header_records_proof(const std::string& database,
              {"descriptions", "descriptions.bin"}}) {
         struct stat file;
         if (::stat((path / pair.second).c_str(), &file) != 0 || !S_ISREG(file.st_mode)) {
-            throw std::runtime_error("incomplete certified AAStore record files");
+            throw std::runtime_error("incomplete certified RabbitAAStore record files");
         }
         const std::string prefix = std::string(pair.first) + '_';
         const uint64_t mtime = static_cast<uint64_t>(file.st_mtim.tv_sec) * UINT64_C(1000000000) + file.st_mtim.tv_nsec;
@@ -324,7 +324,7 @@ HeaderRecordsProof header_records_proof(const std::string& database,
         } else if (number((prefix + "size").c_str()) != static_cast<uint64_t>(file.st_size) ||
                    number((prefix + "inode").c_str()) != static_cast<uint64_t>(file.st_ino) ||
                    number((prefix + "mtime_ns").c_str()) != mtime) {
-            throw std::runtime_error("AAStore record certificate no longer matches AAStore files");
+            throw std::runtime_error("RabbitAAStore record certificate no longer matches RabbitAAStore files");
         }
     }
     if (legacy && dense == 1) {
@@ -342,14 +342,14 @@ HeaderRecordsProof header_records_proof(const std::string& database,
             output << "MMSEQS_AASTORE_HEADERS_V2\n";
             for (const auto& field : fields) output << field.first << '=' << field.second << '\n';
             output.close();
-            if (!output) throw std::runtime_error("cannot upgrade AAStore record certificate");
+            if (!output) throw std::runtime_error("cannot upgrade RabbitAAStore record certificate");
             std::filesystem::rename(temporary, certificate);
         } catch (...) {
             std::error_code ignored;
             std::filesystem::remove(temporary, ignored);
             throw;
         }
-        Debug(Debug::INFO) << "Upgraded AAStore record certificate to AAStore index binding: " << database << "\n";
+        Debug(Debug::INFO) << "Upgraded RabbitAAStore record certificate to RabbitAAStore index binding: " << database << "\n";
     }
     proof.present = true;
     proof.denseIds = dense == 1;
@@ -402,8 +402,8 @@ aastore_memory::Budget automatic_storage_budget(
 const char* storage_mode_name(aastore::StorageMode mode) {
     switch (mode) {
         case aastore::StorageMode::FullMemory: return "full_memory";
-        case aastore::StorageMode::PrefixMemory: return "prefix_memory";
-        case aastore::StorageMode::ByteRange: return "byte_range";
+        case aastore::StorageMode::PartialMemory: return "partial_memory";
+        case aastore::StorageMode::NoMemory: return "no_memory";
     }
     return "unknown";
 }
@@ -479,7 +479,7 @@ std::string AAStoreTargetReader::associatedStorePath(
         if (path.empty() ||
             !fs::is_regular_file(fs::path(path) / "packed.bin") ||
             !fs::is_regular_file(fs::path(path) / "meta.bin")) {
-            throw std::runtime_error("invalid AAStore database association: " + locator.string());
+            throw std::runtime_error("invalid RabbitAAStore database association: " + locator.string());
         }
         return path;
     }
@@ -508,7 +508,6 @@ void AAStoreTargetReader::associateSubsetDatabase(
     std::sort(keys.begin(), keys.end());
     aastore::StoreOptions options;
     options.index_load_mode = configuredIndexLoadMode();
-    options.storage_mode = aastore::StorageMode::ByteRange;
     const std::string path = resolved_store_path(store);
     aastore::Store metadataStore(path, options);
     SubsetHeader header;
@@ -518,7 +517,7 @@ void AAStoreTargetReader::associateSubsetDatabase(
     header.metaMtimeNs = metadata_mtime_ns(path);
     header.pathBytes = path.size();
     for (const uint32_t key : keys) {
-        if (key >= metadataStore.size()) throw std::out_of_range("AAStore subset member exceeds physical ID range");
+        if (key >= metadataStore.size()) throw std::out_of_range("RabbitAAStore subset member exceeds physical ID range");
         const uint64_t length = metadataStore.sequence_length(key);
         header.totalResidues = aastore_memory::add_bytes(header.totalResidues, length);
         header.maxResidues = std::max(header.maxResidues, length);
@@ -533,7 +532,7 @@ void AAStoreTargetReader::associateSubsetDatabase(
         output.write(reinterpret_cast<const char*>(keys.data()),
                      static_cast<std::streamsize>(keys.size() * sizeof(uint32_t)));
         output.close();
-        if (!output) throw std::runtime_error("cannot write AAStore subset membership: " + members.string());
+        if (!output) throw std::runtime_error("cannot write RabbitAAStore subset membership: " + members.string());
         fs::rename(temporary, members);
         write_association(database, store, true);
     } catch (...) {
@@ -613,16 +612,16 @@ bool AAStoreTargetReader::openAssociated(
                 boundStore != resolved_store_path(path) ||
                 subsetHeader.metaBytes != file_bytes(fs::path(path) / "meta.bin") ||
                 subsetHeader.metaMtimeNs != metadata_mtime_ns(path)) {
-                throw std::runtime_error("AAStore subset membership differs from associated store: " + members.string());
+                throw std::runtime_error("RabbitAAStore subset membership differs from associated store: " + members.string());
             }
             subsetView = true;
         } else if (layout == kSubsetAssociation) {
-            throw std::runtime_error("missing AAStore subset membership: " + members.string());
+            throw std::runtime_error("missing RabbitAAStore subset membership: " + members.string());
         } else if (layout.empty()) {
             // Compatibility for old one-line associations only. Convert keys
             // once without constructing/parsing a native DBReader index.
             std::ifstream index(database + ".index");
-            if (!index) throw std::runtime_error("legacy AAStore association needs its index for one-time membership conversion");
+            if (!index) throw std::runtime_error("legacy RabbitAAStore association needs its index for one-time membership conversion");
             std::string line;
             uint64_t count = 0;
             bool dense = true;
@@ -631,7 +630,7 @@ bool AAStoreTargetReader::openAssociated(
                 uint64_t key = 0, offset = 0, length = 0;
                 std::string extra;
                 if (!(fields >> key >> offset >> length) || fields >> extra || key >= UINT_MAX) {
-                    throw std::runtime_error("invalid legacy AAStore sequence index entry");
+                    throw std::runtime_error("invalid legacy RabbitAAStore sequence index entry");
                 }
                 if (dense && key != count) {
                     dense = false;
@@ -639,12 +638,11 @@ bool AAStoreTargetReader::openAssociated(
                     std::iota(subsetKeys.begin(), subsetKeys.end(), uint32_t{0});
                 }
                 if (!dense) subsetKeys.push_back(static_cast<uint32_t>(key));
-                if (++count > UINT_MAX) throw std::runtime_error("AAStore view exceeds MMseqs ID range");
+                if (++count > UINT_MAX) throw std::runtime_error("RabbitAAStore view exceeds MMseqs ID range");
             }
-            if (!index.eof()) throw std::runtime_error("cannot read legacy AAStore sequence index");
+            if (!index.eof()) throw std::runtime_error("cannot read legacy RabbitAAStore sequence index");
             aastore::StoreOptions metadataOptions;
             metadataOptions.index_load_mode = configuredIndexLoadMode();
-            metadataOptions.storage_mode = aastore::StorageMode::ByteRange;
             uint64_t storeCount;
             {
                 aastore::Store metadataStore(path, metadataOptions);
@@ -658,7 +656,7 @@ bool AAStoreTargetReader::openAssociated(
                 }
                 associateSubsetDatabase(database, path, std::move(subsetKeys));
             }
-            Debug(Debug::INFO) << "Upgraded legacy AAStore association to explicit membership: " << database << "\n";
+            Debug(Debug::INFO) << "Upgraded legacy RabbitAAStore association to explicit membership: " << database << "\n";
             return openAssociated(database, computeThreads, stageMemoryReserve,
                                   preferRecordFields, recordSafetyReserve, scoring,
                                   headersOnly, fullHeader);
@@ -670,7 +668,7 @@ bool AAStoreTargetReader::openAssociated(
     // Old raw separators can make the native accession span both fields.
     const bool includeDescriptions = !headersOnly || fullHeader || !proof.insertHeaderSpace;
     if (headersOnly && (!proof.present || !proof.denseIds)) {
-        throw std::runtime_error("AAStore TSV export needs certified dense record IDs");
+        throw std::runtime_error("RabbitAAStore TSV export needs certified dense record IDs");
     }
     aastore_memory::Budget automaticBudget = automatic_storage_budget(
         database, computeThreads, stageMemoryReserve,
@@ -689,11 +687,11 @@ bool AAStoreTargetReader::openAssociated(
         subsetKeys.resize(static_cast<size_t>(subsetHeader.count));
         input.read(reinterpret_cast<char*>(subsetKeys.data()),
                    static_cast<std::streamsize>(subsetKeys.size() * sizeof(uint32_t)));
-        if (!input) throw std::runtime_error("truncated AAStore subset membership: " + database + ".aastore.ids");
+        if (!input) throw std::runtime_error("truncated RabbitAAStore subset membership: " + database + ".aastore.ids");
         for (size_t id = 0; id < subsetKeys.size(); ++id) {
             if (subsetKeys[id] >= subsetHeader.storeCount ||
                 (id != 0 && subsetKeys[id - 1] > subsetKeys[id])) {
-                throw std::runtime_error("invalid AAStore subset member order or ID");
+                throw std::runtime_error("invalid RabbitAAStore subset member order or ID");
             }
         }
     }
@@ -703,23 +701,16 @@ bool AAStoreTargetReader::openAssociated(
         std::min(automaticBudget.cacheBytes, packedBytes);
     aastore::StoreOptions options;
     options.index_load_mode = configuredIndexLoadMode();
-    size_t cacheBytes = 0;
-    if (packedBytes != 0 && selectedBytes >= packedBytes) {
-        options.storage_mode = aastore::StorageMode::FullMemory;
-    } else if (selectedBytes >= kMinimumPrefixBytes) {
-        options.storage_mode = aastore::StorageMode::PrefixMemory;
-        cacheBytes = static_cast<size_t>(std::min<uint64_t>(
-            selectedBytes, std::numeric_limits<size_t>::max()));
-    } else {
-        options.storage_mode = aastore::StorageMode::ByteRange;
-    }
-
+    // Retain the integration's minimum useful prefix, while the library
+    // derives residency from the requested preload budget itself.
+    options.preload_bytes = (packedBytes != 0 && selectedBytes >= packedBytes) ||
+                            selectedBytes >= kMinimumPrefixBytes
+        ? selectedBytes : 0;
     options.threads = 8;
-    options.cache_bytes = cacheBytes;
     options.resident_names = proof.present && automaticBudget.residentText;
     options.resident_descriptions = options.resident_names && includeDescriptions;
     if (proof.present) {
-        Debug(Debug::INFO) << "AAStore record allocation planned: resident_text_columns="
+        Debug(Debug::INFO) << "RabbitAAStore record allocation planned: resident_text_columns="
             << (options.resident_names ? 1 : 0)
             << " memory_text_reserve=" << automaticBudget.textReserve
             << " memory_metadata_reserve=" << automaticBudget.metadataReserve
@@ -732,10 +723,10 @@ bool AAStoreTargetReader::openAssociated(
         std::filesystem::path(path), options));
     resetIdMap();
     if (scoring) {
-        if (store_->size() > UINT_MAX) throw std::runtime_error("AAStore database exceeds MMseqs key range");
+        if (store_->size() > UINT_MAX) throw std::runtime_error("RabbitAAStore database exceeds MMseqs key range");
         if (subsetView) {
             if (subsetHeader.storeCount != store_->size()) {
-                throw std::runtime_error("AAStore subset membership sequence count differs from store");
+                throw std::runtime_error("RabbitAAStore subset membership sequence count differs from store");
             }
             mmseqsToAAStoreId_ = std::move(subsetKeys);
             hasIdMap_ = true;
@@ -743,7 +734,7 @@ bool AAStoreTargetReader::openAssociated(
         updateViewStatistics();
         if (subsetView && (viewTotalLength_ != subsetHeader.totalResidues ||
                            viewMaxLength_ != subsetHeader.maxResidues)) {
-            throw std::runtime_error("AAStore subset membership statistics differ from metadata");
+            throw std::runtime_error("RabbitAAStore subset membership statistics differ from metadata");
         }
     }
     recordsEnabled_ = proof.present;
@@ -752,7 +743,7 @@ bool AAStoreTargetReader::openAssociated(
     headerDescriptionsEnabled_ = includeDescriptions;
     if (recordsEnabled_) {
         if (store_->size() != proof.records || !store_->has_names() || !store_->has_descriptions()) {
-            throw std::runtime_error("certified AAStore record columns differ from sequence metadata");
+            throw std::runtime_error("certified RabbitAAStore record columns differ from sequence metadata");
         }
     }
 
@@ -761,13 +752,13 @@ bool AAStoreTargetReader::openAssociated(
     readOptions_.io_backend = aastore::IoBackend::IoUring;
 
     Debug(Debug::INFO)
-        << "AAStore target enabled: " << path
+        << "RabbitAAStore target enabled: " << path
         << " io_backend=" << (headersOnly ? "pread" : "io_uring")
         << " threads=1"
         << " merge_gap=" << readOptions_.merge_gap_bytes
         << " max_range=" << readOptions_.max_merged_range_bytes
-        << " cache_bytes=" << cacheBytes
-        << " storage_mode=" << storage_mode_name(options.storage_mode)
+        << " preload_bytes=" << options.preload_bytes
+        << " storage_mode=" << storage_mode_name(store_->storage_mode())
         << " index_load_mode=" << (store_->index_load_mode() == aastore::IndexLoadMode::Read ? "read" : "mmap")
         << " memory_limit=" << automaticBudget.memoryLimit
         << " memory_available=" << automaticBudget.memoryAvailable
@@ -811,7 +802,7 @@ bool AAStoreTargetReader::headerDescriptionsEnabled() const noexcept {
 void AAStoreTargetReader::getHeaderFields(
         size_t key, std::string& name, std::string& description) const {
     if (!recordsEnabled_ || !recordsDenseIds_) {
-        throw std::logic_error("AAStore TSV headers require certified dense record IDs");
+        throw std::logic_error("RabbitAAStore TSV headers require certified dense record IDs");
     }
     aastore::ReadOptions options;
     options.threads = 1;
@@ -834,7 +825,7 @@ std::string_view AAStoreTargetReader::headerSeparator(std::string_view descripti
 }
 
 uint64_t AAStoreTargetReader::recordLength(size_t mmseqsId) const {
-    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    if (!recordsEnabled_) throw std::logic_error("RabbitAAStore native record fields are not enabled");
     const size_t id = store_id_for_mmseqs_id(mmseqsId);
     return aastore_memory::add_bytes(store_->sequence_length(id),
         aastore_memory::add_bytes(store_->name_length(id), store_->description_length(id)));
@@ -843,7 +834,7 @@ uint64_t AAStoreTargetReader::recordLength(size_t mmseqsId) const {
 void AAStoreTargetReader::fetch_records(const std::vector<size_t>& ids,
                                       RecordThreadBatch& batch,
                                       size_t computeThreads, size_t readThreads) const {
-    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    if (!recordsEnabled_) throw std::logic_error("RabbitAAStore native record fields are not enabled");
     batch.physicalIds.clear();
     batch.physicalIds.reserve(ids.size());
     batch.positions.prepare(ids.size());
@@ -862,7 +853,7 @@ void AAStoreTargetReader::fetch_records(const std::vector<size_t>& ids,
 
 void AAStoreTargetReader::fetch_headers(const std::vector<size_t>& ids,
                                       RecordThreadBatch& batch, size_t readThreads) const {
-    if (!recordsEnabled_) throw std::logic_error("AAStore native record fields are not enabled");
+    if (!recordsEnabled_) throw std::logic_error("RabbitAAStore native record fields are not enabled");
     batch.physicalIds.clear();
     batch.physicalIds.reserve(ids.size());
     batch.positions.prepare(ids.size());
@@ -890,13 +881,13 @@ bool AAStoreTargetReader::fullMemory() const noexcept {
 size_t AAStoreTargetReader::threadBatchQueueDepth(size_t computeThreads) {
     if (computeThreads == 0 || computeThreads > kThreadBatchIoBudget) {
         throw std::invalid_argument(
-            "AAStore thread batches require 1 to 512 compute threads");
+            "RabbitAAStore thread batches require 1 to 512 compute threads");
     }
     return kThreadBatchIoBudget / computeThreads;
 }
 
 void AAStoreTargetReader::prepare_into(ThreadBatch& batch) const {
-    if (!store_) throw std::logic_error("AAStore reader is not open");
+    if (!store_) throw std::logic_error("RabbitAAStore reader is not open");
     Batch& result = batch.sequences;
     result.positions.prepare(batch.ids.size());
     result.fetched.offsets.clear();
@@ -907,7 +898,7 @@ void AAStoreTargetReader::prepare_into(ThreadBatch& batch) const {
     size_t bytes = 0;
     for (const size_t id : batch.ids) {
         if (id >= size()) {
-            throw std::out_of_range("AAStore MMseqs ID out of range");
+            throw std::out_of_range("RabbitAAStore MMseqs ID out of range");
         }
         if (!result.positions.insert_if_absent(
                 id, batch.physicalIds.size())) {
@@ -916,7 +907,7 @@ void AAStoreTargetReader::prepare_into(ThreadBatch& batch) const {
         const size_t physicalId = store_id_for_mmseqs_id(id);
         const uint64_t length = store_->sequence_length(physicalId);
         if (length >= std::numeric_limits<size_t>::max() - bytes) {
-            throw std::length_error("AAStore thread batch exceeds address space");
+            throw std::length_error("RabbitAAStore thread batch exceeds address space");
         }
         batch.physicalIds.push_back(
             static_cast<aastore::SequenceId>(physicalId));
@@ -956,7 +947,7 @@ void AAStoreTargetReader::logIoStats(
         const std::vector<aastore::BatchStats>& workers) {
     aastore::BatchStats total;
     for (const auto& worker : workers) accumulateIoStats(total, worker);
-    Debug(Debug::INFO) << "AAStore thread I/O: ranges=" << total.ranges
+    Debug(Debug::INFO) << "RabbitAAStore thread I/O: ranges=" << total.ranges
         << " read_bytes=" << total.read_bytes
         << " requests=" << total.io_submissions
         << "\n";
@@ -964,12 +955,12 @@ void AAStoreTargetReader::logIoStats(
 
 size_t AAStoreTargetReader::store_id_for_mmseqs_id(
         size_t mmseqsId) const {
-    if (!store_) throw std::logic_error("AAStore reader is not open");
+    if (!store_) throw std::logic_error("RabbitAAStore reader is not open");
     if (hasIdMap_) {
         return static_cast<size_t>(mmseqsToAAStoreId_.at(mmseqsId));
     }
     if (mmseqsId >= store_->size()) {
-        throw std::out_of_range("AAStore MMseqs ID out of range");
+        throw std::out_of_range("RabbitAAStore MMseqs ID out of range");
     }
     return mmseqsId;
 }
@@ -1024,7 +1015,7 @@ size_t AAStoreTargetReader::getId(unsigned int key) const {
 
 unsigned int AAStoreTargetReader::getDbKey(size_t mmseqsId) const {
     const size_t physical = store_id_for_mmseqs_id(mmseqsId);
-    if (physical > UINT_MAX) throw std::out_of_range("AAStore key exceeds MMseqs key range");
+    if (physical > UINT_MAX) throw std::out_of_range("RabbitAAStore key exceeds MMseqs key range");
     return static_cast<unsigned int>(physical);
 }
 
@@ -1036,7 +1027,7 @@ void AAStoreTargetReader::mapFromMMseqsKeys(
         const size_t storeId = static_cast<size_t>(keys[id]);
         if (storeId >= store_->size()) {
             throw std::out_of_range(
-                "MMseqs key exceeds AAStore physical ID range");
+                "MMseqs key exceeds RabbitAAStore physical ID range");
         }
         identity = identity && storeId == id;
     }
@@ -1045,7 +1036,7 @@ void AAStoreTargetReader::mapFromMMseqsKeys(
     hasIdMap_ = true;
     viewStatisticsKnown_ = false;
     if (!std::is_sorted(keys.begin(), keys.end())) {
-        if (keys.size() > UINT_MAX) throw std::out_of_range("AAStore view exceeds MMseqs ID range");
+        if (keys.size() > UINT_MAX) throw std::out_of_range("RabbitAAStore view exceeds MMseqs ID range");
         keyOrder_.resize(keys.size());
         std::iota(keyOrder_.begin(), keyOrder_.end(), uint32_t{0});
         std::stable_sort(keyOrder_.begin(), keyOrder_.end(),
@@ -1057,7 +1048,7 @@ void AAStoreTargetReader::validateSize(size_t mmseqsSize) const {
     if (!enabled()) return;
     if (size() != mmseqsSize) {
         throw std::runtime_error(
-            "AAStore and MMseqs target database sizes differ: aastore=" +
+            "RabbitAAStore and MMseqs target database sizes differ: aastore=" +
             std::to_string(size()) + " mmseqs=" +
             std::to_string(mmseqsSize));
     }
@@ -1067,7 +1058,7 @@ void AAStoreTargetReader::get(
         size_t mmseqsId, std::string& output) const {
     if (!fullMemory()) {
         throw std::logic_error(
-            "direct AAStore reads require FullMemory");
+            "direct RabbitAAStore reads require FullMemory");
     }
     store_->get_into(
         static_cast<aastore::SequenceId>(

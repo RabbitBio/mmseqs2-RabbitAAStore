@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "aastore"
 dynamic = ["version"]
-description = "Compact FASTA storage with parallel random and sequential access"
+description = "RabbitAAStore: compact FASTA storage with parallel random and sequential access"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.9"

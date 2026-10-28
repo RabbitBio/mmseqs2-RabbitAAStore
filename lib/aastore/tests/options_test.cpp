@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -88,12 +89,10 @@ void check_valid_options(const Fixture& fixture) {
     }
     options.io_backend = aastore::IoBackend::Pread;
     const std::vector<aastore::SequenceId> ids{0, 1, 1, 2};
-    for (const auto mode : {aastore::StorageMode::ByteRange,
-                            aastore::StorageMode::PrefixMemory,
-                            aastore::StorageMode::FullMemory}) {
+    for (const uint64_t budget : {uint64_t{0}, uint64_t{1},
+                                  std::numeric_limits<uint64_t>::max()}) {
         aastore::StoreOptions store_options;
-        store_options.storage_mode = mode;
-        store_options.cache_bytes = mode == aastore::StorageMode::PrefixMemory ? 1 : 0;
+        store_options.preload_bytes = budget;
         store_options.threads = 0;
         store_options.validate();
         for (const auto index_mode : {aastore::IndexLoadMode::Mmap,
@@ -136,19 +135,8 @@ void check_invalid_build(const Fixture& fixture) {
            "invalid overwrite preserves the existing store");
 }
 
-// 未知存储模式与无效前缀预算即使路径不存在也必须报配置错误。
+// 无效索引加载方式即使路径不存在也必须报配置错误。
 void check_invalid_store(const Fixture& fixture) {
-    for (const auto mode : {static_cast<aastore::StorageMode>(2),
-                            static_cast<aastore::StorageMode>(99),
-                            aastore::StorageMode::PrefixMemory}) {
-        aastore::StoreOptions options;
-        options.storage_mode = mode;
-        expect_invalid([&] { options.validate(); }, "public StoreOptions validation");
-        for (const auto& path : {fixture.path, fixture.root / "missing-store"}) {
-            expect_invalid([&] { aastore::Store store(path, options); },
-                           "Store validates options before opening files");
-        }
-    }
     for (const auto mode : {static_cast<aastore::IndexLoadMode>(99),
                            static_cast<aastore::IndexLoadMode>(255)}) {
         aastore::StoreOptions options;
@@ -161,14 +149,87 @@ void check_invalid_store(const Fixture& fixture) {
     }
 }
 
+// 预算只限制编码序列预载；全量边界必须进入无需文件读取的快速路径。
+void check_preload_budget(const Fixture& fixture) {
+    const uint64_t packed = aastore::Store(fixture.path).packed_bytes();
+    struct Case {
+        uint64_t budget;
+        aastore::StorageMode mode;
+        uint64_t resident;
+    };
+    const std::vector<Case> cases{
+        {0, aastore::StorageMode::NoMemory, 0},
+        {1, aastore::StorageMode::PartialMemory, 1},
+        {packed - 1, aastore::StorageMode::PartialMemory, packed - 1},
+        {packed, aastore::StorageMode::FullMemory, packed},
+        {packed + 1, aastore::StorageMode::FullMemory, packed},
+        {std::numeric_limits<uint64_t>::max(), aastore::StorageMode::FullMemory, packed}};
+    const std::vector<aastore::SequenceId> ids{2, 1, 1, 0};
+    aastore::ReadOptions reads;
+    reads.io_backend = aastore::IoBackend::Pread;
+    reads.collect_diagnostics = true;
+    for (const auto index_mode : {aastore::IndexLoadMode::Mmap,
+                                 aastore::IndexLoadMode::Read}) {
+        for (const auto& test : cases) {
+            aastore::StoreOptions options;
+            options.preload_bytes = test.budget;
+            options.index_load_mode = index_mode;
+            aastore::Store store(fixture.path, options);
+            expect(store.storage_mode() == test.mode &&
+                       store.resident_bytes() == test.resident,
+                   "preload budget selects the mode and bounds allocation");
+            const auto batch = store.get(ids, reads);
+            for (size_t i = 0; i < ids.size(); ++i) {
+                expect(batch.view(i) == fixture.sequences[ids[i]],
+                       "budget boundaries preserve duplicate, unsorted and empty records");
+            }
+            if (test.mode == aastore::StorageMode::FullMemory) {
+                expect(batch.stats.full_memory && !batch.stats.prefix_memory &&
+                           batch.stats.read_bytes == 0 && batch.stats.ranges == 0 &&
+                           batch.stats.sort_ns == 0 && batch.stats.range_plan_ns == 0,
+                       "a sufficient budget selects the full-memory fast path");
+            }
+        }
+    }
+
+    // 空库和仅含空序列的库无需分配 packed 缓冲，正预算也不能产生部分驻留。
+    for (const bool empty_records : {false, true}) {
+        const auto fasta = fixture.root / (empty_records ? "empty-records.fa" : "empty.fa");
+        const auto path = fixture.root / (empty_records ? "empty-records" : "empty");
+        {
+            std::ofstream output(fasta);
+            if (empty_records) output << ">one\n>two\n";
+        }
+        aastore::build_fasta(fasta, path);
+        for (const auto& test : std::vector<Case>{
+                 {0, aastore::StorageMode::NoMemory, 0},
+                 {1, aastore::StorageMode::FullMemory, 0},
+                 {std::numeric_limits<uint64_t>::max(), aastore::StorageMode::FullMemory, 0}}) {
+            aastore::StoreOptions options;
+            options.preload_bytes = test.budget;
+            aastore::Store store(path, options);
+            expect(store.packed_bytes() == 0 && store.resident_bytes() == 0 &&
+                       store.storage_mode() == test.mode,
+                   "empty encoded data has deterministic residency without allocation");
+            const auto batch = store.sequential_get(0, store.size(), reads);
+            expect(batch.size() == (empty_records ? 2 : 0) && batch.stats.read_bytes == 0,
+                   "empty sequences remain readable in the selected mode");
+            if (empty_records) {
+                const auto records = store.get({1, 0, 1}, reads);
+                expect(records.size() == 3 && records.view(0).empty() &&
+                           records.view(1).empty() && records.view(2).empty(),
+                       "random reads of empty sequences preserve request count");
+            }
+        }
+    }
+}
+
 // 每个读取入口在空请求、驻留数据与调用方输出区上都遵守同一校验规则。
 void check_invalid_reads(const Fixture& fixture) {
-    for (const auto mode : {aastore::StorageMode::ByteRange,
-                            aastore::StorageMode::PrefixMemory,
-                            aastore::StorageMode::FullMemory}) {
+    for (const uint64_t budget : {uint64_t{0}, uint64_t{1},
+                                  std::numeric_limits<uint64_t>::max()}) {
         aastore::StoreOptions store_options;
-        store_options.storage_mode = mode;
-        store_options.cache_bytes = 1;
+        store_options.preload_bytes = budget;
         store_options.threads = 1;
         store_options.resident_names = true;
         store_options.resident_descriptions = true;
@@ -230,6 +291,7 @@ int main() {
         check_valid_options(fixture);
         check_invalid_build(fixture);
         check_invalid_store(fixture);
+        check_preload_budget(fixture);
         check_invalid_reads(fixture);
     } catch (const std::exception& error) {
         expect(false, std::string("unexpected exception: ") + error.what());

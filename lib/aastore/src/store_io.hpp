@@ -25,14 +25,14 @@ struct StoreReadContext {
     // 序列边界索引，由 Store 持有，用于 ID 到字符位置的查询。
     const Metadata* metadata = nullptr;
     // 本次读取采用的磁盘、固定前缀或全量常驻模式。
-    StorageMode storage_mode = StorageMode::ByteRange;
+    StorageMode storage_mode = StorageMode::NoMemory;
     // packed.bin 的只读文件描述符，供定位读取使用。
     int packed_descriptor = -1;
     // FullMemory 模式的完整 packed 数据起点，非此模式时可为空。
     const uint8_t* full_packed = nullptr;
     // full_packed 可访问的有效字节数。
     uint64_t full_packed_bytes = 0;
-    // PrefixMemory 模式从 packed.bin 偏移零开始的常驻数据起点。
+    // PartialMemory 模式从 packed.bin 偏移零开始的常驻数据起点。
     const uint8_t* prefix_packed = nullptr;
     // 常驻前缀覆盖的字节数，请求须完整落入此前缀才能直接解码。
     uint64_t prefix_packed_bytes = 0;

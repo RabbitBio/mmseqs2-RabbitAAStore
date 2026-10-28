@@ -144,7 +144,10 @@ struct Store::Impl {
 
     // 打开存储文件，并按配置初始化文本列和 packed 数据缓存。
     Impl(const std::filesystem::path& path, const StoreOptions& options)
-        : metadata_(path, options.index_load_mode), storage_mode_(options.storage_mode),
+        : metadata_(path, options.index_load_mode),
+          storage_mode_(options.preload_bytes == 0 ? StorageMode::NoMemory
+              : options.preload_bytes >= metadata_.packed_bytes()
+                  ? StorageMode::FullMemory : StorageMode::PartialMemory),
           index_load_mode_(options.index_load_mode) {
         const std::filesystem::path packed_path = path / "packed.bin";
         packed_descriptor_ = ::open(
@@ -168,9 +171,9 @@ struct Store::Impl {
                 preload_full_packed(options.threads);
                 ::close(packed_descriptor_);
                 packed_descriptor_ = -1;
-            } else if (storage_mode_ == StorageMode::PrefixMemory) {
+            } else if (storage_mode_ == StorageMode::PartialMemory) {
                 preload_packed_prefix(
-                    options.cache_bytes, options.threads);
+                    options.preload_bytes, options.threads);
             }
         } catch (...) {
             if (packed_descriptor_ >= 0) ::close(packed_descriptor_);
@@ -203,7 +206,7 @@ struct Store::Impl {
 
     // 返回序列 packed 数据当前占用的常驻内存字节数。
     uint64_t resident_bytes() const {
-        if (storage_mode_ == StorageMode::PrefixMemory) {
+        if (storage_mode_ == StorageMode::PartialMemory) {
             return static_cast<uint64_t>(prefix_packed_.size());
         }
         return static_cast<uint64_t>(full_packed_.size());
@@ -262,11 +265,13 @@ struct Store::Impl {
                metadata_.start_position(id);
     }
 
+    // 名称长度由文本索引提供，不读取名称正文。
     uint64_t name_length(SequenceId id) const {
         if (!names_) throw std::runtime_error("store has no name column");
         return names_->length(id);
     }
 
+    // 描述长度由文本索引提供，不读取描述正文。
     uint64_t description_length(SequenceId id) const {
         if (!descriptions_) throw std::runtime_error("store has no description column");
         return descriptions_->length(id);
@@ -297,7 +302,7 @@ struct Store::Impl {
         }
         const PackedByteExtent extent =
             packed_byte_extent(request);
-        if (storage_mode_ == StorageMode::PrefixMemory &&
+        if (storage_mode_ == StorageMode::PartialMemory &&
             extent.end <= prefix_packed_.size()) {
             decode_request_from_extent(
                 request, prefix_packed_.data(), 0,
@@ -422,7 +427,7 @@ struct Store::Impl {
     // 持有 meta.bin 的只读映射，提供序列数和字符边界查询。
     Metadata metadata_;
     // 打开 Store 时确定的驻留模式，决定读取从文件、前缀还是全量内存取数据。
-    StorageMode storage_mode_ = StorageMode::ByteRange;
+    StorageMode storage_mode_ = StorageMode::NoMemory;
     IndexLoadMode index_load_mode_ = IndexLoadMode::Mmap;
     // 本对象拥有的 packed.bin 描述符；全量预加载后关闭并置为 -1。
     int packed_descriptor_ = -1;
@@ -430,7 +435,7 @@ struct Store::Impl {
     std::unique_ptr<TextColumn> names_;
     // 可选描述列读取器，与名称列拥有独立的数据和索引。
     std::unique_ptr<TextColumn> descriptions_;
-    // PrefixMemory 模式保留的 packed 文件连续前缀，读取期间内容不变。
+    // PartialMemory 模式保留的 packed 文件连续前缀，读取期间内容不变。
     std::vector<uint8_t, NoInitAllocator<uint8_t>> prefix_packed_;
     // FullMemory 模式保留的完整 packed 数据，尚未解码为字符。
     std::vector<uint8_t, NoInitAllocator<uint8_t>> full_packed_;
@@ -500,10 +505,12 @@ uint64_t Store::sequence_length(SequenceId id) const {
     return impl_->sequence_length(id);
 }
 
+// 返回指定记录的名称字节数。
 uint64_t Store::name_length(SequenceId id) const {
     return impl_->name_length(id);
 }
 
+// 返回指定记录的描述字节数。
 uint64_t Store::description_length(SequenceId id) const {
     return impl_->description_length(id);
 }

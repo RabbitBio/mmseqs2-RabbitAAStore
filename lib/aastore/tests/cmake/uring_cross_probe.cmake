@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
+include("${CMAKE_CURRENT_LIST_DIR}/test_helpers.cmake")
+
 if(NOT AASTORE_TEST_BINARY_DIR)
     message(FATAL_ERROR "AASTORE_TEST_BINARY_DIR is required")
 endif()
@@ -164,18 +166,10 @@ if(AASTORE_TEST_GENERATOR)
     list(APPEND common_arguments -G "${AASTORE_TEST_GENERATOR}")
 endif()
 
-function(run_command)
-    execute_process(COMMAND ${ARGV} RESULT_VARIABLE result
-        OUTPUT_VARIABLE output ERROR_VARIABLE error)
-    if(NOT result EQUAL 0)
-        message(FATAL_ERROR "Command failed (${result}): ${ARGV}\n${output}\n${error}")
-    endif()
-endfunction()
-
 set(library_build "${AASTORE_TEST_BINARY_DIR}/libraries")
-run_command("${CMAKE_COMMAND}" -S "${fixture_source}/libraries"
+aastore_test_run_checked("${CMAKE_COMMAND}" -S "${fixture_source}/libraries"
     -B "${library_build}" ${common_arguments} -DCMAKE_BUILD_TYPE=Release)
-run_command("${CMAKE_COMMAND}" --build "${library_build}" --config Release)
+aastore_test_run_checked("${CMAKE_COMMAND}" --build "${library_build}" --config Release)
 
 # Setting CMAKE_SYSTEM_NAME marks even a same-architecture compiler as cross.
 # This exercises CMake's cross-compiling behavior without a platform toolchain.
@@ -190,7 +184,7 @@ foreach(library IN ITEMS empty baseline complete)
     elseif(library STREQUAL "complete")
         set(expected_optional TRUE)
     endif()
-    run_command("${CMAKE_COMMAND}" -S "${fixture_source}/probe"
+    aastore_test_run_checked("${CMAKE_COMMAND}" -S "${fixture_source}/probe"
         -B "${AASTORE_TEST_BINARY_DIR}/${library}"
         ${common_arguments} "-DCMAKE_TOOLCHAIN_FILE=${toolchain}"
         "-DAASTORE_TEST_MODULE_DIR=${AASTORE_TEST_MODULE_DIR}"

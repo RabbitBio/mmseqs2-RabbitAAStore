@@ -1,5 +1,5 @@
-// 文件职责：在原生 shuffle 完成后写出 AAStore，保持 key 与物理 ID 一致。
-// 直接复用内置 AAStore 编码写入器，不创建额外 FASTA 或顺序版本的 AAStore。
+// 文件职责：在原生 shuffle 完成后写出 RabbitAAStore，保持 key 与物理 ID 一致。
+// 直接复用内置 RabbitAAStore 编码写入器，不创建额外 FASTA 或顺序版本的 RabbitAAStore。
 #include "AAStoreDatabaseBuilder.h"
 
 #include "AAStoreTargetReader.h"
@@ -52,7 +52,7 @@ struct DatabaseCloser {
     ~DatabaseCloser() { reader.close(); }
 };
 
-// Reuse AAStore's text reader when joining native shuffle partitions.
+// Reuse RabbitAAStore's text reader when joining native shuffle partitions.
 template <typename Callback>
 void visitText(const std::filesystem::path& path, uint64_t count,
                bool withDescriptions, Callback callback) {
@@ -89,7 +89,7 @@ void writeRecordsCertificate(const std::filesystem::path& directory,
              {"descriptions", "descriptions.bin"}}) {
         struct stat file;
         if (::stat((directory / pair.second).c_str(), &file) != 0 || !S_ISREG(file.st_mode)) {
-            throw std::runtime_error("Cannot stat AAStore record file");
+            throw std::runtime_error("Cannot stat RabbitAAStore record file");
         }
         const std::string prefix = std::string(pair.first) + '_';
         out << prefix << "size=" << file.st_size << '\n'
@@ -111,7 +111,7 @@ void buildDatabase(const std::string& database, size_t threads, AAStoreCreatedbT
     for (size_t id = 0; id < reader.getSize(); ++id) {
         if (reader.getDbKey(id) != id) {
             throw std::runtime_error(
-                "automatic AAStore creation requires dense keys starting at 0; "
+                "automatic RabbitAAStore creation requires dense keys starting at 0; "
                 "create the source database with --id-offset 0 first");
         }
     }
@@ -120,11 +120,11 @@ void buildDatabase(const std::string& database, size_t threads, AAStoreCreatedbT
     const fs::path temporary = store.string() + ".tmp." +
                                std::to_string(::getpid());
     if (!fs::create_directory(temporary)) {
-        throw std::runtime_error("temporary AAStore already exists: " +
+        throw std::runtime_error("temporary RabbitAAStore already exists: " +
                                  temporary.string());
     }
     try {
-        Debug(Debug::INFO) << "Building AAStore in final MMseqs ID order "
+        Debug(Debug::INFO) << "Building RabbitAAStore in final MMseqs ID order "
                            << "(shuffle already applied): " << store.string() << "\n";
         aastore::BuildStats stats;
         {
@@ -137,7 +137,7 @@ void buildDatabase(const std::string& database, size_t threads, AAStoreCreatedbT
                 aastore::normalize_sequence_line(sequence, normalized);
                 if (normalized.size() != sequence.size()) {
                     throw std::runtime_error(
-                        "AAStore normalization would change sequence length at key " +
+                        "RabbitAAStore normalization would change sequence length at key " +
                         std::to_string(id));
                 }
                 writer.append_residues(normalized);
@@ -169,7 +169,7 @@ void buildDatabase(const std::string& database, size_t threads, AAStoreCreatedbT
         syncPath(store, true);
         syncPath(store.parent_path().empty() ? fs::path(".") : store.parent_path(), true);
         AAStoreTargetReader::associateDatabase(database, store.string());
-        Debug(Debug::INFO) << "AAStore built: " << stats.sequences << " sequences, "
+        Debug(Debug::INFO) << "RabbitAAStore built: " << stats.sequences << " sequences, "
                            << stats.packed_bytes << " packed bytes"
                            << (texts ? ", names/descriptions included; native_header_db=0" : "") << "\n";
     } catch (...) {
@@ -299,14 +299,14 @@ void prepareAAStoreDatabase(const std::string& database, size_t threads,
                     fs::last_write_time(database + ".index") >
                         fs::last_write_time(fs::path(store) / "meta.bin");
                 if (!staleLocalStore) {
-                    Debug(Debug::INFO) << "Using existing AAStore: " << store << "\n";
+                    Debug(Debug::INFO) << "Using existing RabbitAAStore: " << store << "\n";
                     return;
                 }
             }
         }
         buildDatabase(database, threads, texts);
     } catch (const std::exception& error) {
-        Debug(Debug::ERROR) << "AAStore preparation failed: " << error.what() << "\n";
+        Debug(Debug::ERROR) << "RabbitAAStore preparation failed: " << error.what() << "\n";
         EXIT(EXIT_FAILURE);
     }
 }

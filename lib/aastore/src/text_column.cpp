@@ -226,24 +226,19 @@ struct TextColumn::Impl {
             !read_value(input, block_count) ||
             !read_value(input, offset_count) ||
             record_count_ != expected_records || block_shift_ == 0 ||
-            block_shift_ > 31 || record_count_ == std::numeric_limits<uint64_t>::max() ||
-            offset_count != record_count_ + 1 ||
-            offset_count > (std::numeric_limits<uint64_t>::max() - kTextHeaderBytes) / sizeof(uint32_t)) {
+            block_shift_ > 31 || offset_count != record_count_ + 1) {
             throw std::runtime_error(
                 "invalid text-column metadata: " + metadata_path.string());
         }
         const uint64_t expected_blocks = record_count_ == 0
             ? 0
-            : ((record_count_ - 1) >> block_shift_) + 1;
+            : (record_count_ + (uint64_t{1} << block_shift_) - 1) >>
+                  block_shift_;
         const uint64_t offsets_bytes = offset_count * sizeof(uint32_t);
-        if (block_count != expected_blocks ||
-            block_count + 1 > (std::numeric_limits<uint64_t>::max() - kTextHeaderBytes - offsets_bytes) / sizeof(uint64_t)) {
-            throw std::runtime_error(
-                "inconsistent text-column metadata: " + metadata_path.string());
-        }
         const uint64_t bases_bytes = (block_count + 1) * sizeof(uint64_t);
         const uint64_t index_bytes = kTextHeaderBytes + offsets_bytes + bases_bytes;
-        if (std::filesystem::file_size(metadata_path) != index_bytes ||
+        if (block_count != expected_blocks ||
+            std::filesystem::file_size(metadata_path) != index_bytes ||
             index_bytes > static_cast<uint64_t>(
                 std::numeric_limits<size_t>::max())) {
             throw std::runtime_error(
@@ -314,7 +309,7 @@ struct TextColumn::Impl {
         return block_base + offsets_[index];
     }
 
-    // 复用记录边界查询长度，包含空字符串并拒绝倒置边界。
+    // 查询文本长度，包含空字符串并拒绝倒置边界。
     uint64_t length(SequenceId id) const {
         if (id >= record_count_) {
             throw std::out_of_range("text-column id out of range");
@@ -374,9 +369,6 @@ struct TextColumn::Impl {
             }
             const uint64_t begin = offset(ids[i]);
             const uint64_t end = offset(ids[i] + 1);
-            if (end < begin) {
-                throw std::runtime_error("text-column boundaries are not monotonic");
-            }
             const uint64_t length = end - begin;
             batch.offsets[i] = output_bytes;
             batch.lengths[i] = length;

@@ -38,7 +38,7 @@ int createtsv(int argc, const char **argv, const Command &command) {
         AAStoreTargetReader::hasNativeRecordHeaders(par.db1) &&
         aaHeaders.openForHeaders(par.db1, par.threads, reader->getTotalDataSize(), par.fullHeader);
     if (useAAStoreHeaders) {
-        Debug(Debug::INFO) << "AAStore createtsv: fields="
+        Debug(Debug::INFO) << "RabbitAAStore createtsv: fields="
             << (aaHeaders.headerDescriptionsEnabled() ? "name,description" : "name")
             << " native_header_db=0 threads=" << par.threads
             << " packed_resident_bytes=0 packed_preload_seconds=0\n";

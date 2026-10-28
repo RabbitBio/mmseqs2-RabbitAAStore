@@ -1,50 +1,51 @@
-# Minimal AAStore integration for Linclust
+# Minimal RabbitAAStore integration for Linclust
 
-This branch uses AAStore as an optional random-access sequence and record reader.
+This branch uses RabbitAAStore as an optional random-access sequence and record reader.
 MMseqs2 continues to own database creation, shuffle, k-mer matching, result
-databases and the native sequence payload. AAStore alignment and rescoring use
-AAStore sequence metadata without opening the native sequence `.index`.
+databases and the native sequence payload. RabbitAAStore alignment and rescoring use
+RabbitAAStore sequence metadata without opening the native sequence `.index`.
 `createdb --aastore` captures names
-and descriptions while parsing, then constructs all three AAStore fields in
+and descriptions while parsing, then constructs all three RabbitAAStore fields in
 the final native ID order without a native header database.
 
 The integration has seven parts:
 
 1. `AAStoreTargetReader`: storage selection, memory budgeting, full-store keys
    and compact subset membership, FullMemory reads, and thread-local random batches.
-2. `rescorediagonal`: AAStore query/target access for same-database rescoring.
-3. `Alignment`: AAStore target access and same-database query access.
+2. `rescorediagonal`: RabbitAAStore query/target access for same-database rescoring.
+3. `Alignment`: RabbitAAStore target access and same-database query access.
 4. `aastoreexportfasta`: complete and representative FASTA output through
    `batch_get_records(All)`. Same-source `createtsv --aastore` substitutes
-   AAStore text fields inside the native parallel processing loop.
+   RabbitAAStore text fields inside the native parallel processing loop.
 5. `createsubdb`: propagation of the small `.aastore.path` association.
 6. `--aastore`: automatic construction in final MMseqs ID order and workflow
    parameter forwarding.
 7. CMake wiring and focused unit/integration tests.
 
-There is no AAStore read path in `kmermatcher` or `result2flat`.
-AAStore does not replace the native MMseqs2 sequence file. Native k-mer matching,
+There is no RabbitAAStore read path in `kmermatcher` or `result2flat`.
+RabbitAAStore does not replace the native MMseqs2 sequence file. Native k-mer matching,
 candidate/result database access and clustering still use their usual `.index`
 files; keep these files for the complete Linclust workflow.
 
-Linclust's clustering stages and parameters are unchanged. AAStore easy
+Linclust's clustering stages and parameters are unchanged. RabbitAAStore easy
 workflows bypass ASCII output databases and `result2flat`. The native
-`--cluster-mode` option applies to both clustering passes. Nonresident AAStore
+`--cluster-mode` option applies to both clustering passes. Nonresident RabbitAAStore
 reads collect candidate-byte batches behind a shared sequence-access interface.
-The shared adapter preserves AAStore's candidate-byte scheduling while scoring
+The shared adapter preserves RabbitAAStore's candidate-byte scheduling while scoring
 keeps native candidate order and rules.
 
 ## Build
 
-AAStore sources are included in `lib/aastore` and built together with MMseqs2:
+RabbitAAStore sources are included in `lib/aastore` and built together with MMseqs2:
 
 ```bash
 cmake -S . -B build-aastore
 cmake --build build-aastore -j8
 ```
 
-The bundled source is based on
-[`RabbitBio/AABinaryStore` at `ab94e4d3a0306c78d29ffe2182c3839fe803073d`](https://github.com/RabbitBio/AABinaryStore/tree/ab94e4d3a0306c78d29ffe2182c3839fe803073d).
+The bundled source is an exact copy of the tracked files from
+[`RabbitBio/AABinaryStore` at `d029762804fa6e0fba61bf7ef2af564c189afaea`](https://github.com/RabbitBio/AABinaryStore/tree/d029762804fa6e0fba61bf7ef2af564c189afaea),
+without local library patches. Git metadata and local build outputs are not bundled.
 The Scan strategy and its public options/counters have been removed in sync
 with the standalone library; existing Sparse range merging is unchanged.
 Resident name and description columns likewise use Store-owned buffers
@@ -57,7 +58,7 @@ the library; no external checkout is required.
 
 The build always uses this project's `lib/aastore` sources; no external
 checkout or prebuilt archive is selected. Linux `liburing` is required.
-The AAStore library is linked into `mmseqs`. Standalone tools are not part of
+The RabbitAAStore library is linked into `mmseqs`. Standalone tools are not part of
 the default build or MMseqs2 installation, but remain available as explicit
 build targets for tests or independent use.
 
@@ -81,15 +82,15 @@ Use the usual native command with one additional option:
 ./build-aastore/src/mmseqs linclust target clusters tmp --threads 64 --aastore
 ```
 
-Native `createdb` completes its usual shuffle/renumbering first. AAStore then
-encodes those records directly in final key order: AAStore ID `i` is native
+Native `createdb` completes its usual shuffle/renumbering first. RabbitAAStore then
+encodes those records directly in final key order: RabbitAAStore ID `i` is native
 key `i`. This avoids building, decoding, and rewriting a separate input-order
-AAStore, and does not create an intermediate FASTA. During parsing, names and
+RabbitAAStore, and does not create an intermediate FASTA. During parsing, names and
 descriptions are written into text-column shards matching native shuffle
-partitions, using AAStore's standard `TextBuildWriter`. The shards are read
-with AAStore's text reader and joined in final ID order by the same writer;
+partitions, using RabbitAAStore's standard `TextBuildWriter`. The shards are read
+with RabbitAAStore's text reader and joined in final ID order by the same writer;
 `target_h`, `target_h.index` and `target_h.dbtype` are never generated in this
-mode. Names and descriptions follow AAStore's default field semantics;
+mode. Names and descriptions follow RabbitAAStore's default field semantics;
 exports insert one space before a nonempty description. Original separator
 whitespace is not retained for new builds.
 Compressed/multiple FASTA inputs use
@@ -98,7 +99,7 @@ soft mode disables shuffle even when `--shuffle 1` was requested.
 
 An existing associated store is reused; otherwise `linclust`/`cluster` builds
 sequence-only `target.aastore` automatically from the native sequence database.
-This path does not add names or descriptions. Direct AAStore FASTA export
+This path does not add names or descriptions. Direct RabbitAAStore FASTA export
 requires the record columns produced by `createdb --aastore`; for an existing
 sequence-only store, rebuild from its original FASTA with that command.
 A local store older than the native index is rebuilt. Subsets retain the parent
@@ -107,7 +108,7 @@ association. Easy workflows remove their own temporary store with
 Automatic construction currently requires a non-GPU amino-acid database
 with dense keys starting at zero (`--id-offset 0`).
 
-`--aastore` and `--aastore 1` enable automatic preparation and AAStore reads.
+`--aastore` and `--aastore 1` enable automatic preparation and RabbitAAStore reads.
 Without the option, or with `--aastore 0`, sequence reads always use native
 MMseqs2, even when a store is associated. The flag is forwarded to the
 `rescorediagonal` and `align` subprocesses.
@@ -116,16 +117,16 @@ FASTA files with `aastoreexportfasta`, using `--representative-only 1` for the
 representative output. `--representative-only` belongs to `aastoreexportfasta`
 and controls which sequences that command writes; it does not change cluster
 assignment, scoring, or the clustering parameters. Native formatters that
-require `_h` are not used for new AAStore databases. The native
+require `_h` are not used for new RabbitAAStore databases. The native
 `result2repseq` and `createseqfiledb` commands retain their original
-implementations and do not read AAStore.
-AAStore has no environment-variable
+implementations and do not read RabbitAAStore.
+RabbitAAStore has no environment-variable
 configuration in the MMseqs2 adapter.
 
 ## Database associations
 
 Automatic preparation writes the store to `target.aastore`. The full database
-uses AAStore ID = native key and needs no extra member table. A `createsubdb`
+uses RabbitAAStore ID = native key and needs no extra member table. A `createsubdb`
 operation records the parent store's absolute path in the subset's
 `.aastore.path` file and writes `.aastore.ids`, a compact list of the subset's
 original sequence keys with its residue-count and maximum-length metadata.
@@ -134,12 +135,12 @@ index. A key outside the subset is rejected even when the sequence exists in
 the shared full store. Missing or invalid subset membership is an error.
 
 The native data link or payload is retained. Associations only locate storage;
-they cannot enable AAStore reads. Full and subset associations distinguish their
+they cannot enable RabbitAAStore reads. Full and subset associations distinguish their
 view type. An older single-line association can be upgraded once by streaming
 its existing native sequence index; subsequent scoring uses the saved member
 table. New associations require no such conversion.
 `cpdb`, `lndb` and `mvdb` carry the association and member table with a subset;
-`rmdb` removes those subset artifacts without deleting the shared AAStore.
+`rmdb` removes those subset artifacts without deleting the shared RabbitAAStore.
 Reusing a subset output for an unassociated native source clears its old
 association and member table. If the output owns a local `.aastore` directory,
 `createsubdb` requires a fresh output path instead of overwriting that store.
@@ -151,7 +152,7 @@ to read an already prepared, associated store.
 ## Random-access pipeline
 
 `AAStoreSequenceAccess` owns each compute thread's sequence buffers and delegates
-ID lookup and size metadata to AAStore when enabled. It does not keep a native
+ID lookup and size metadata to RabbitAAStore when enabled. It does not keep a native
 sequence `DBReader` in this mode. Native reads retain the original `DBReader`.
 `AAStoreQueryBatches` shares the existing candidate collector and assignment
 cursor between alignment and rescoring. In nonresident modes, each worker
@@ -169,14 +170,14 @@ the candidates in that batch have already been fetched. Native and FullMemory
 paths retain their original OpenMP scheduling. Candidate order, acceptance and
 rejection limits, and scoring logic remain native.
 
-Each outer compute thread uses one AAStore I/O owner:
+Each outer compute thread uses one RabbitAAStore I/O owner:
 
 - `threads = 1`
 - process-wide queue-slot budget = 512
 - per-thread queue depth = `floor(512 / compute_threads)`
 
 With `io_uring`, packed reads remain in flight while the calling compute
-thread handles already completed ranges. PrefixMemory can also decode its
+thread handles already completed ranges. PartialMemory can also decode its
 resident prefix after the initial asynchronous submissions. During rescoring
 and alignment, FullMemory skips batch I/O and decodes each requested sequence into a reusable string;
 Alignment then calls `Sequence::mapSequence` to fill its existing numeric buffer.
@@ -204,9 +205,9 @@ clusters span batches of approximately 64 MiB. Individual records are not split,
 so this threshold is not a hard memory cap. A cluster key absent from its member
 batch is fetched as text fields only.
 
-Names and descriptions use the default AAStore field semantics: one space is
+Names and descriptions use the default RabbitAAStore field semantics: one space is
 inserted before a nonempty description. Original header separator whitespace
-is not retained for newly created stores. Sequence content follows AAStore's
+is not retained for newly created stores. Sequence content follows RabbitAAStore's
 normalization rules; it does not restore original letter case or unsupported
 characters discarded during construction.
 
@@ -215,7 +216,7 @@ reader and native sequence index. New record stores use V2 certification bound
 to `meta.bin`, `names.meta`, `descriptions.meta`, `packed.bin`, `names.bin` and
 `descriptions.bin`. Validation checks each file's size, inode and modification
 time with `stat`, without scanning its contents. Replacing or touching a
-certified AAStore file invalidates record export. The source's native sequence
+certified RabbitAAStore file invalidates record export. The source's native sequence
 payload, sequence `.index` and `_h` database are not required; cluster/result
 data and `.index` remain native.
 
@@ -235,7 +236,7 @@ older record columns. Subsequent outputs no longer depend on that native index.
 The adapter keeps names and descriptions
 resident together when their complete data fit after metadata, workspaces and
 safety reserves. Otherwise both columns use batched reads. Only the remaining
-pool is assigned to packed sequence data. AAStore supplies `name_length` and
+pool is assigned to packed sequence data. RabbitAAStore supplies `name_length` and
 `description_length` alongside `sequence_length` for batch sizing.
 
 `--representative-only 1` writes the first cluster member's sequence under the
@@ -250,7 +251,7 @@ to preserve native accession parsing. TSV never preloads packed sequences.
 Only the selected text columns are made resident when the memory budget allows;
 otherwise each thread uses `pread` and reuses its own text buffers.
 Native `result2repseq`, `createseqfiledb` and `result2flat` remain
-available for native databases with native headers; the AAStore easy workflows
+available for native databases with native headers; the RabbitAAStore easy workflows
 use direct record output instead.
 
 ## Memory policy
@@ -271,7 +272,7 @@ It does not change the packed/text data storage mode or candidate scheduling.
 ```
 
 The adapter automatically selects storage mode by sampling host and cgroup
-memory before opening AAStore:
+memory before opening RabbitAAStore:
 
 ```text
 remaining pool =
@@ -281,15 +282,19 @@ remaining pool =
   - per-thread batch buffers
   - current stage working-set reserve
 
-AAStore prefix       = floor_to_2_MiB(remaining pool * 90%)
-page-cache/headroom  = remaining pool - AAStore prefix
+RabbitAAStore prefix       = floor_to_2_MiB(remaining pool * 90%)
+page-cache/headroom  = remaining pool - RabbitAAStore prefix
 ```
 
 The safety reserve is `max(4 GiB, memory limit / 5)`. The remaining roughly
 10% absorbs transient allocations and file-page reclaim/writeback
 fluctuations. The selected prefix is clamped to `packed.bin`; complete
-coverage selects FullMemory, at least 64 MiB selects PrefixMemory, and a
-smaller budget selects ByteRange.
+coverage selects FullMemory, at least 64 MiB selects PartialMemory, and a
+smaller budget selects NoMemory. The integration passes this selection as a
+`StoreOptions::preload_bytes` budget: zero disables sequence preloading,
+and a positive budget lets RabbitAAStore derive partial or full residency from
+the encoded sequence size. `StoreOptions` no longer accepts an explicit
+storage mode; `Store::storage_mode()` reports the resulting mode.
 
 The direct `aastoreexportfasta` command uses an 8 GiB safety reserve for its
 single writer and bounded records workspace. It opens the cluster index before
@@ -303,10 +308,10 @@ reserve above.
 
 Enable the adapter with `--aastore` and set compute threads with the native
 `--threads` option. Storage mode and prefix size follow the memory policy
-above. The adapter uses `io_uring`, eight preload threads, and the AAStore
+above. The adapter uses `io_uring`, eight preload threads, and the RabbitAAStore
 library's default range-merging limits: 4 KiB gaps, 16 KiB normal ranges,
 and 1 MiB exact ranges. These settings are not separate command-line or
-environment-variable options. The standalone AAStore library retains its
+environment-variable options. The standalone RabbitAAStore library retains its
 own `StoreOptions` and `ReadOptions` APIs.
 
 ## Tests
@@ -345,20 +350,20 @@ python3 src/test/test_aastore_createdb_records.py \
 
 The unit test covers memory budgeting, all three storage modes, both I/O
 backends, ID mapping, and output-arena reuse. The integration test compares
-native and automatically configured AAStore results for gapped and ungapped
+native and automatically configured RabbitAAStore results for gapped and ungapped
 Linclust with one and four compute threads, using the automatic sequence-only
 adapter for an existing native database. It also covers direct `Alignment` over a
 reordered subset, and `createsubdb` association and membership propagation.
 Fresh main/subset scoring tests hide both native sequence indexes before running
-AAStore align/rescore with one and four threads and compare keyed result rows
+RabbitAAStore align/rescore with one and four threads and compare keyed result rows
 with native scoring, including realignment and alternative alignments. They
-also compare a separate native query database against an AAStore subset target
+also compare a separate native query database against a RabbitAAStore subset target
 while its native target index is hidden. They
-reject globally valid keys excluded from a subset and check that missing AAStore
+reject globally valid keys excluded from a subset and check that missing RabbitAAStore
 storage cannot trigger a native fallback. They also verify that
 copied, linked and moved subsets retain their index-independent scoring view,
 and removing those artifacts leaves their source intact. Native subset reuse
-checks clear old associations, while a local AAStore output is preserved when
+checks clear old associations, while a local RabbitAAStore output is preserved when
 reuse is rejected. `--cluster-mode 3` is checked on both native clustering passes.
 
 The sequence-access test checks candidate-byte collection, repeated IDs,
@@ -371,7 +376,7 @@ missing query/target IDs fail before scoring and empty inputs stay empty.
 
 The automatic CLI test compares encoded stores with the public FASTA builder
 after native sequence reads, including shuffled, unshuffled, soft, compressed and
-multiple-input databases. It compares native and AAStore workflow results,
+multiple-input databases. It compares native and RabbitAAStore workflow results,
 tests reuse/rebuild behavior and verifies easy-workflow cleanup.
 It also compares representative/all-sequence FASTA outputs and checks export
 flag propagation. Direct export tests compare FASTA records and TSV rows with
@@ -379,7 +384,7 @@ native output for stores constructed by `createdb --aastore`, including member
 order, repeated members and representative selection. They also verify that
 all/representative FASTA and TSV outputs remain identical after removing the
 native source sequence index and all payload shards from header-free stores.
-Certificate tests cover V1 automatic upgrade, changed AAStore index identity or
+Certificate tests cover V1 automatic upgrade, changed RabbitAAStore index identity or
 mtime, and rejection of both explicit and old single-line subset views.
 
 The records construction test compares all six column files against the

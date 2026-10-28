@@ -1,47 +1,12 @@
 // 文件职责：用独立标量构造的输入验证 5 位字符解码。
 // 测试不同起始位偏移和长度，并以紧邻保护页的缓冲检查越界读写。
 #include "../src/codec.hpp"
+#include "guarded_buffer.hpp"
 
 #include <algorithm>
 #include <iostream>
-#include <stdexcept>
-#include <sys/mman.h>
-#include <unistd.h>
 
-namespace {
-
-class GuardedBuffer {
-public:
-    // 分配可读写测试页和紧邻的不可访问保护页，以捕获越界访问。
-    GuardedBuffer() : page_(static_cast<size_t>(::sysconf(_SC_PAGESIZE))) {
-        void* mapping = ::mmap(nullptr, page_ * 2, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mapping == MAP_FAILED) throw std::runtime_error("mmap failed");
-        data_ = static_cast<uint8_t*>(mapping);
-        if (::mprotect(data_ + page_, page_, PROT_NONE) != 0) {
-            ::munmap(data_, page_ * 2);
-            throw std::runtime_error("mprotect failed");
-        }
-    }
-    // 解除测试缓冲及其保护页的映射。
-    ~GuardedBuffer() { ::munmap(data_, page_ * 2); }
-    // 禁止复制拥有内存映射的保护缓冲。
-    GuardedBuffer(const GuardedBuffer&) = delete;
-    // 禁止复制赋值，避免重复解除映射。
-    GuardedBuffer& operator=(const GuardedBuffer&) = delete;
-
-    // 返回末尾恰好贴着保护页的缓冲，供精确边界测试使用。
-    uint8_t* ending_at_guard(size_t size) {
-        if (size >= page_) throw std::runtime_error("test buffer too large");
-        return data_ + page_ - size;
-    }
-
-private:
-    size_t page_;
-    uint8_t* data_;
-};
-
-}  // namespace
+using aastore_test::GuardedBuffer;
 
 // 验证全部编码和未对齐范围，并用保护页检查越界访问。
 int main() {

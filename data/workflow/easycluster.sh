@@ -35,7 +35,7 @@ if notExists "${TMP_PATH}/rep_seq.fasta"; then
     if [ -n "${AASTORE}" ]; then
         # shellcheck disable=SC2086
         "$MMSEQS" aastoreexportfasta "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/rep_seq.fasta" ${AASTORE_REP_EXPORT_PAR} \
-            || fail "AAStore representative export died"
+            || fail "RabbitAAStore representative export died"
     else
         # shellcheck disable=SC2086
         "$MMSEQS" result2repseq "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/clu_rep" ${RESULT2REPSEQ_PAR} \
@@ -51,7 +51,7 @@ if notExists "${TMP_PATH}/all_seqs.fasta"; then
     if [ -n "${AASTORE}" ]; then
         # shellcheck disable=SC2086
         "$MMSEQS" aastoreexportfasta "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/all_seqs.fasta" ${AASTORE_EXPORT_PAR} \
-            || fail "AAStore member export died"
+            || fail "RabbitAAStore member export died"
     else
         # shellcheck disable=SC2086
         "$MMSEQS" createseqfiledb "${TMP_PATH}/input" "${TMP_PATH}/clu" "${TMP_PATH}/clu_seqs" ${THREADS_PAR} \

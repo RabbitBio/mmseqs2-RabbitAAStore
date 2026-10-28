@@ -1,4 +1,4 @@
-"""Compare fresh AAStore direct FASTA and TSV exports with native output."""
+"""Compare fresh RabbitAAStore direct FASTA and TSV exports with native output."""
 
 import argparse
 import json
@@ -54,7 +54,7 @@ def same_file(left, right):
 
 def tsv_backend_log(log, full_header=False, threads=4):
     fields = 'name,description' if full_header else 'name'
-    return ('AAStore createtsv: fields={} native_header_db=0 threads={} '
+    return ('RabbitAAStore createtsv: fields={} native_header_db=0 threads={} '
             'packed_resident_bytes=0 packed_preload_seconds=0'.format(fields, threads)
             in log)
 
@@ -132,7 +132,7 @@ def main():
         body, expected, actual = (root / (label + suffix)
                                   for suffix in ('_body', '_native.fa', '_aa.fa'))
         # Native commands remain an independent oracle; they are never asked
-        # to read AAStore and are not used by the AAStore production workflow.
+        # to read RabbitAAStore and are not used by the RabbitAAStore production workflow.
         command = 'result2repseq' if representative else 'createseqfiledb'
         body_options = [] if representative else ['--hh-format', int(hh_format), *options]
         run(label + '_native_body', [command, native, clusters, body,
@@ -146,7 +146,7 @@ def main():
                   '--hh-format', int(hh_format), '-v', 3, *options])
         check(label + '_bytes', same_file(expected, actual))
         check(label + '_records_backend',
-              'AAStore aastoreexportfasta: batch_get_records fields=all header=AAStore' in log)
+              'RabbitAAStore aastoreexportfasta: batch_get_records fields=all header=RabbitAAStore' in log)
         check(label + '_dense_ids', 'records_dense_ids=1' in log)
         return expected
 
@@ -178,7 +178,7 @@ def main():
         store = Path(str(aa) + '.aastore')
         names, descriptions = text_column(store, 'names'), text_column(store, 'descriptions')
         check(label + '_field_count', len(names) == 129 and len(descriptions) == 129)
-        # Default AAStore fields normalize the name/description separator.
+        # Default RabbitAAStore fields normalize the name/description separator.
         # Apply only that documented normalization to the native oracle.
         replace_headers(native, {key: name + (b' ' if descriptions[key] else b'') + descriptions[key]
                                  for key, name in enumerate(names)})
@@ -242,7 +242,7 @@ def main():
         write_clusters(parallel, [(key, [key, (key + 37) % 128, key])
                                   for key in reversed(range(128))])
         expected = compare_fasta(label + '_parallel', native, aa, parallel, threads=4)
-        # Both FASTA and TSV must work with only AAStore source fields and the
+        # Both FASTA and TSV must work with only RabbitAAStore source fields and the
         # cluster/result index. No native sequence index, payload, or header is
         # available to validate or supply the source records.
         payloads = ([aa] if aa.is_file() else sorted(

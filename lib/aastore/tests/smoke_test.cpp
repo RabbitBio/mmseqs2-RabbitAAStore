@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -130,11 +131,11 @@ void check_pread(const Fixture& fixture) {
 
 // 检查混合前缀命中/磁盘未命中、全内存解码，以及常驻文本列。
 void check_memory(const Fixture& fixture) {
-    for (const auto mode : {aastore::StorageMode::PrefixMemory,
+    for (const auto mode : {aastore::StorageMode::PartialMemory,
                             aastore::StorageMode::FullMemory}) {
         aastore::StoreOptions opening;
-        opening.storage_mode = mode;
-        opening.cache_bytes = 64;
+        opening.preload_bytes = mode == aastore::StorageMode::PartialMemory
+            ? 64 : std::numeric_limits<uint64_t>::max();
         opening.threads = 2;
         opening.resident_names = true;
         opening.resident_descriptions = true;
@@ -142,7 +143,7 @@ void check_memory(const Fixture& fixture) {
         const auto options = read_options(aastore::IoBackend::Pread, 2);
         const auto batch = store.get(fixture.ids, options);
         check_batch(fixture, batch);
-        if (mode == aastore::StorageMode::PrefixMemory) {
+        if (mode == aastore::StorageMode::PartialMemory) {
             check(batch.stats.cache_hits > 0 && batch.stats.cache_misses > 0 &&
                   batch.stats.read_bytes > 0, "mixed prefix hit/miss path was not used");
         } else {

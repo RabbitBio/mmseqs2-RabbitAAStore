@@ -13,19 +13,6 @@ void BuildOptions::validate() const {
 }
 
 void StoreOptions::validate() const {
-    switch (storage_mode) {
-        case StorageMode::ByteRange:
-        case StorageMode::FullMemory:
-            break;
-        case StorageMode::PrefixMemory:
-            if (cache_bytes == 0) {
-                throw std::invalid_argument(
-                    "prefix-memory capacity must be greater than zero");
-            }
-            break;
-        default:
-            throw std::invalid_argument("unknown storage mode");
-    }
     if (index_load_mode != IndexLoadMode::Mmap &&
         index_load_mode != IndexLoadMode::Read) {
         throw std::invalid_argument("unknown index load mode");

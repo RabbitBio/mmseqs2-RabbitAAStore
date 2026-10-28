@@ -228,8 +228,8 @@ Arguments parse_arguments(int argc, char** argv) {
 // 返回基准支持的存储模式标签，未匹配模式返回 unknown。
 const char* storage_mode_name(aastore::StorageMode mode) {
     switch (mode) {
-        case aastore::StorageMode::ByteRange: return "byte_range";
-        case aastore::StorageMode::PrefixMemory: return "prefix_memory";
+        case aastore::StorageMode::NoMemory: return "no_memory";
+        case aastore::StorageMode::PartialMemory: return "partial_memory";
         case aastore::StorageMode::FullMemory: return "full_memory";
     }
     return "unknown";
@@ -465,19 +465,17 @@ int main(int argc, char** argv) {
         const auto open_start = Clock::now();
         aastore::StoreOptions store_options;
         if (arguments.memory_mb < 0) {
-            store_options.storage_mode = aastore::StorageMode::FullMemory;
-        } else if (arguments.memory_bytes_set && arguments.memory_bytes > 0) {
-            store_options.storage_mode = aastore::StorageMode::PrefixMemory;
-            store_options.cache_bytes = arguments.memory_bytes;
+            store_options.preload_bytes = std::numeric_limits<uint64_t>::max();
+        } else if (arguments.memory_bytes_set) {
+            store_options.preload_bytes = arguments.memory_bytes;
         } else if (arguments.memory_mb > 0) {
-            store_options.storage_mode = aastore::StorageMode::PrefixMemory;
             const uint64_t memory_mb =
                 static_cast<uint64_t>(arguments.memory_mb);
             if (memory_mb >
                 std::numeric_limits<uint64_t>::max() / (1024ULL * 1024ULL)) {
                 throw std::length_error("memory budget is too large");
             }
-            store_options.cache_bytes = memory_mb * 1024ULL * 1024ULL;
+            store_options.preload_bytes = memory_mb * 1024ULL * 1024ULL;
         }
         store_options.threads = arguments.threads;
         aastore::Store store(arguments.store, store_options);
@@ -656,7 +654,7 @@ int main(int argc, char** argv) {
                          store.storage_mode()) << '\n'
                   << "resident_bytes=" << store.resident_bytes() << '\n'
                   << "packed_bytes=" << store.packed_bytes() << '\n'
-                  << "prefix_budget_bytes=" << store_options.cache_bytes << '\n'
+                  << "preload_bytes=" << store_options.preload_bytes << '\n'
                   << "preload_ms=" << store.preload_ns() / 1.0e6 << '\n'
                   << "decode_kernel=" << store.decode_kernel_name() << '\n'
                   << "merge_gap_bytes="

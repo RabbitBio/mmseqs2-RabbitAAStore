@@ -90,8 +90,7 @@ void validate_batch(AAStoreSequenceAccess& access, DBReader<unsigned int>& pref,
 void check_batched(const std::string& store, DBReader<unsigned int>& pref, const std::vector<std::string>& source,
                    aastore::StorageMode mode) {
     aastore::StoreOptions options;
-    options.storage_mode = mode;
-    options.cache_bytes = 17;
+    options.preload_bytes = mode == aastore::StorageMode::PartialMemory ? 17 : 0;
     aastore::ReadOptions reads;
     reads.io_backend = aastore::IoBackend::Pread;
     reads.collect_diagnostics = true;
@@ -239,11 +238,11 @@ int main() {
         DBReader<unsigned int> pref(prefDatabase.c_str(), (prefDatabase + ".index").c_str(), kWorkers,
                                     DBReader<unsigned int>::USE_INDEX | DBReader<unsigned int>::USE_DATA);
         pref.open(DBReader<unsigned int>::LINEAR_ACCCESS);
-        for (aastore::StorageMode mode : {aastore::StorageMode::ByteRange,
-                                        aastore::StorageMode::PrefixMemory})
+        for (aastore::StorageMode mode : {aastore::StorageMode::NoMemory,
+                                        aastore::StorageMode::PartialMemory})
             check_batched(store, pref, source, mode);
         aastore::StoreOptions options;
-        options.storage_mode = aastore::StorageMode::FullMemory;
+        options.preload_bytes = UINT64_MAX;
         AAStoreTargetReader full;
         full.open(store, options, aastore::ReadOptions{});
         check_direct(full, native, source);
@@ -253,12 +252,12 @@ int main() {
             std::filesystem::rename(index, hidden);
             AAStoreTargetReader independent;
             require(independent.openForScoring(database, kWorkers, 0, true),
-                    "AAStore scoring required a native sequence index");
+                    "RabbitAAStore scoring required a native sequence index");
             AAStoreSequenceAccess access(independent, NULL, 0, kWorkers);
             require(access.size() == source.size(), "independent scoring view has wrong size");
             for (unsigned int key = 0; key < source.size(); ++key)
                 require(access.getId(key) == key && access.getDbKey(key) == key,
-                        "full scoring view changed stable AAStore IDs");
+                        "full scoring view changed stable RabbitAAStore IDs");
             std::filesystem::rename(hidden, index);
         }
         DBReader<unsigned int> nativeData(database.c_str(), (database + ".index").c_str(), 1,
@@ -270,7 +269,7 @@ int main() {
         pref.close();
         native.close();
         std::filesystem::remove_all(directory);
-        std::cout << "AAStore whole-query batches, duplicate-byte accounting, stable batch views, "
+        std::cout << "RabbitAAStore whole-query batches, duplicate-byte accounting, stable batch views, "
                      "prefetched revisits, thread dispatch, ID mapping and direct reads: passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << "; fixture retained at " << directory << '\n';

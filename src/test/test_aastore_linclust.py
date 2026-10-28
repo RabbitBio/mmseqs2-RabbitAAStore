@@ -1,4 +1,4 @@
-"""Compare native MMseqs and the minimal AAStore random-access integration."""
+"""Compare native MMseqs and the minimal RabbitAAStore random-access integration."""
 
 import argparse
 import hashlib
@@ -86,9 +86,9 @@ def main():
         [binary, 'createdb', fasta, database, '--shuffle', '1',
          '--createdb-mode', '0', '--dbtype', '1', '--threads', '4', '-v', '0'])
     # Keep native headers for the native-database algorithm fixtures. The first
-    # AAStore Linclust run builds its sequence-only sidecar automatically.
+    # RabbitAAStore Linclust run builds its sequence-only sidecar automatically.
     if store.exists():
-        raise AssertionError('native createdb unexpectedly built an AAStore')
+        raise AssertionError('native createdb unexpectedly built a RabbitAAStore')
 
     # Linclust exercises both rescorediagonal passes and, in gapped mode,
     # Alignment. kmermatcher remains the unmodified native implementation.
@@ -129,19 +129,19 @@ def main():
                     if command[mode_position] != '3':
                         raise AssertionError(label + ' changed the native cluster mode')
             if case != 'native':
-                if 'AAStore rescorediagonal:' not in log:
+                if 'RabbitAAStore rescorediagonal:' not in log:
                     raise AssertionError(
-                        label + ' did not use AAStore in rescorediagonal')
+                        label + ' did not use RabbitAAStore in rescorediagonal')
                 if 'io_backend=io_uring' not in log:
                     raise AssertionError(
                         label + ' did not use the default I/O backend')
                 if alignment_mode != 'ungapped' and (
-                        'AAStore alignment:' not in log or
+                        'RabbitAAStore alignment:' not in log or
                         'query=aastore target=aastore' not in log):
                     raise AssertionError(
-                        label + ' did not use AAStore in Alignment')
-            elif 'AAStore target enabled:' in log:
-                raise AssertionError(label + ' enabled AAStore without the flag')
+                        label + ' did not use RabbitAAStore in Alignment')
+            elif 'RabbitAAStore target enabled:' in log:
+                raise AssertionError(label + ' enabled RabbitAAStore without the flag')
             checks.append({
                 'label': label,
                 'sha256': value,
@@ -149,7 +149,7 @@ def main():
             })
 
     if not all((store / name).is_file() for name in ('packed.bin', 'meta.bin')):
-        raise AssertionError('linclust did not build the associated AAStore')
+        raise AssertionError('linclust did not build the associated RabbitAAStore')
 
     # An associated subset must still use native reads without --aastore.
     index_rows = [
@@ -169,9 +169,9 @@ def main():
          '--subdb-mode', '1', '-v', '0'])
     locator = Path(str(aastore_subset) + '.aastore.path')
     if locator.read_text().splitlines()[0] != str(store):
-        raise AssertionError('createsubdb did not propagate the AAStore path')
+        raise AssertionError('createsubdb did not propagate the RabbitAAStore path')
     if not Path(str(aastore_subset) + '.aastore.ids').is_file():
-        raise AssertionError('createsubdb did not write its AAStore member table')
+        raise AssertionError('createsubdb did not write its RabbitAAStore member table')
     if not aastore_subset.exists():
         raise AssertionError(
             'createsubdb removed the native MMseqs payload')
@@ -210,20 +210,20 @@ def main():
             raise AssertionError((label, value, baseline))
         log = (root / (label + '.log')).read_text()
         if case != 'native':
-            if 'AAStore alignment:' not in log:
+            if 'RabbitAAStore alignment:' not in log:
                 raise AssertionError(
-                    label + ' did not use AAStore Alignment')
-        elif 'AAStore target enabled:' in log:
-            raise AssertionError(label + ' enabled AAStore without the flag')
+                    label + ' did not use RabbitAAStore Alignment')
+        elif 'RabbitAAStore target enabled:' in log:
+            raise AssertionError(label + ' enabled RabbitAAStore without the flag')
         checks.append({
             'label': label,
             'sha256': value,
             'native_equal': True,
         })
 
-    # Fresh-createdb scoring must use AAStore metadata even when neither main
+    # Fresh-createdb scoring must use RabbitAAStore metadata even when neither main
     # nor subset native sequence indexes can be opened. Compare raw keyed result
-    # rows so the AAStore fixture does not need a native header database.
+    # rows so the RabbitAAStore fixture does not need a native header database.
     fresh_native, fresh_aa = root / 'fresh_native', root / 'fresh_aastore'
     common = ['--shuffle', '1', '--createdb-mode', '0', '--dbtype', '1',
               '--threads', '4', '-v', '0']
@@ -232,7 +232,7 @@ def main():
     run('fresh_aastore_createdb', [binary, 'createdb', fasta, fresh_aa,
                                   '--aastore', '1', *common])
     if Path(str(fresh_aa) + '_h.index').exists():
-        raise AssertionError('fresh AAStore scoring fixture unexpectedly has native headers')
+        raise AssertionError('fresh RabbitAAStore scoring fixture unexpectedly has native headers')
 
     def write_candidates(path, query_keys, target_keys):
         offsets = []
@@ -265,7 +265,7 @@ def main():
                                         subset, '--subdb-mode', '1', '-v', '0'])
     member_table = Path(str(fresh_aa_subset) + '.aastore.ids')
     if not member_table.is_file():
-        raise AssertionError('fresh subset lacks its independent AAStore member table')
+        raise AssertionError('fresh subset lacks its independent RabbitAAStore member table')
 
     modes = [
         ('align', ['--alignment-mode', '3', '--realign', '1', '--alt-ali', '1',
@@ -335,31 +335,31 @@ def main():
             raise AssertionError(label + ' removed source sequence data')
         checks.append({'label': label, 'artifacts_removed': True, 'source_preserved': True})
 
-    # Reusing a copied AAStore subset path for a native source must discard the
+    # Reusing a copied RabbitAAStore subset path for a native source must discard the
     # previous association, rather than keep scoring the old shared store.
     run('reuse_subset_prepare', [binary, 'cpdb', fresh_aa_subset, copied, '-v', '0'])
     run('reuse_subset_native_createdb', [binary, 'createsubdb', selection,
                                         fresh_native, copied, '--subdb-mode', '1', '-v', '0'])
     if any(Path(str(copied) + suffix).exists() for suffix in ('.aastore.path', '.aastore.ids')):
-        raise AssertionError('native subset reuse retained an old AAStore association')
+        raise AssertionError('native subset reuse retained an old RabbitAAStore association')
     reused_score = root / 'reuse_subset_native_score'
     log = run(reused_score.name, [binary, 'rescorediagonal', copied, copied,
                                  fresh_pref, reused_score, '--aastore', '0', '--threads', '1',
                                  *stage_options, *modes[1][1]])
-    if 'AAStore target enabled:' in log or scoring_digest(reused_score) != baselines[('subset', 'rescorediagonal')]:
+    if 'RabbitAAStore target enabled:' in log or scoring_digest(reused_score) != baselines[('subset', 'rescorediagonal')]:
         raise AssertionError('reused native subset changed the native scoring result')
     checks.append({'label': 'reuse_subset_native', 'old_sidecars_removed': True,
                    'native_equal': True})
 
-    # A local AAStore directory represents owned data, so createsubdb must fail
+    # A local RabbitAAStore directory represents owned data, so createsubdb must fail
     # before it can overwrite either that store or its native sequence index.
     local_meta = Path(str(fresh_aa) + '.aastore') / 'meta.bin'
     local_index = Path(str(fresh_aa) + '.index')
     preserved_meta, preserved_index = local_meta.read_bytes(), local_index.read_bytes()
     log = run('reuse_local_store_rejected', [binary, 'createsubdb', selection,
               fresh_native, fresh_aa, '--subdb-mode', '1', '-v', '1'], success=False)
-    if 'Output retains an AAStore directory' not in log or local_meta.read_bytes() != preserved_meta or local_index.read_bytes() != preserved_index:
-        raise AssertionError('createsubdb did not preserve an existing local AAStore output')
+    if 'Output retains a RabbitAAStore directory' not in log or local_meta.read_bytes() != preserved_meta or local_index.read_bytes() != preserved_index:
+        raise AssertionError('createsubdb did not preserve an existing local RabbitAAStore output')
     checks.append({'label': 'reuse_local_store_rejected', 'metadata_and_native_index_preserved': True})
 
     indexes = [Path(str(source) + '.index') for source in (fresh_aa, fresh_aa_subset)]
@@ -376,17 +376,17 @@ def main():
                                       '--aastore', '1', '--threads', threads,
                                       *stage_options, *options])
                     stage = 'alignment' if command == 'align' else command
-                    if 'AAStore ' + stage + ':' not in log:
-                        raise AssertionError(label + ' did not use AAStore scoring')
+                    if 'RabbitAAStore ' + stage + ':' not in log:
+                        raise AssertionError(label + ' did not use RabbitAAStore scoring')
                     if command == 'align' and 'query=aastore target=aastore' not in log:
-                        raise AssertionError(label + ' did not use AAStore for both sequences')
+                        raise AssertionError(label + ' did not use RabbitAAStore for both sequences')
                     value = scoring_digest(result)
                     if value != baselines[(view, command)]:
                         raise AssertionError(label + ' changed native scoring results')
                     checks.append({'label': label, 'sha256': value, 'native_equal': True,
                                    'native_sequence_index_absent': True})
 
-        # A separate native query reader must remain independent of the AAStore
+        # A separate native query reader must remain independent of the RabbitAAStore
         # target buffers, including when realignment revisits target sequences.
         for threads in (1, 4):
             label = 'index_independent_mixed_align_aastore_t{}'.format(threads)
@@ -395,12 +395,12 @@ def main():
                               fresh_pref, result, '--aastore', '1', '--threads', threads,
                               *stage_options, *modes[0][1]])
             if 'query=native target=aastore' not in log or scoring_digest(result) != mixed_digest:
-                raise AssertionError(label + ' changed native-query/AAStore-target scoring')
+                raise AssertionError(label + ' changed native-query/RabbitAAStore-target scoring')
             checks.append({'label': label, 'sha256': mixed_digest, 'native_equal': True,
                            'native_target_sequence_index_absent': True,
                            'native_query_reader_retained': True})
 
-        # The key exists in the full AAStore but is excluded from this subset.
+        # The key exists in the full RabbitAAStore but is excluded from this subset.
         outside = next(key for key in range(len(sequences)) if key not in view_keys)
         for missing, query_keys, target_keys in (
                 ('target', [view_keys[0]], [outside]),
@@ -416,7 +416,7 @@ def main():
                     raise AssertionError(label + ' did not report the missing subset member')
                 checks.append({'label': label, 'excluded_global_key_rejected': True})
 
-        # Removing AAStore cannot make an explicitly requested, index-free read
+        # Removing RabbitAAStore cannot make an explicitly requested, index-free read
         # silently use the native sequence payload.
         aa_store = Path(str(fresh_aa) + '.aastore')
         hidden_store = Path(str(aa_store) + '.hidden')
@@ -436,7 +436,7 @@ def main():
 
     (root / 'checks.json').write_text(json.dumps(checks, indent=2))
     print(
-        'AAStore rescorediagonal, Alignment, createsubdb and native-index '
+        'RabbitAAStore rescorediagonal, Alignment, createsubdb and native-index '
         'independence checks passed.',
         flush=True)
 

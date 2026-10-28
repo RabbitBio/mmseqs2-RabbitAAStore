@@ -19,7 +19,7 @@
 namespace aastore {
 namespace {
 
-// PrefixMemory 中命中同一条序列的一组有序请求，解码一次后复制给重复请求。
+// PartialMemory 中命中同一条序列的一组有序请求，解码一次后复制给重复请求。
 struct CacheHitGroup {
     // 完整有序请求数组中该组的起始下标。
     size_t request_begin = 0;
@@ -27,7 +27,7 @@ struct CacheHitGroup {
     size_t request_end = 0;
 };
 
-// PrefixMemory 中同一条未命中序列的请求组，关联一条去重后的磁盘请求。
+// PartialMemory 中同一条未命中序列的请求组，关联一条去重后的磁盘请求。
 struct CacheMissGroup {
     // 完整有序请求数组中该组的起始下标。
     size_t request_begin = 0;
@@ -300,7 +300,7 @@ void prepare_batch_layout(const Metadata* metadata,
         batch->lengths.resize(ids->size());
     }
     batch->stats.full_memory = storage_mode == StorageMode::FullMemory;
-    batch->stats.prefix_memory = storage_mode == StorageMode::PrefixMemory;
+    batch->stats.prefix_memory = storage_mode == StorageMode::PartialMemory;
     batch->stats.requested_sequences = ids->size();
 
     const size_t prepare_workers = ids->size() >= 65536
@@ -449,7 +449,7 @@ void prepare_batch_cache(StorageMode storage_mode,
                          SequenceRequests* requests,
                          BatchStats* stats,
                          BatchCacheWork* work) {
-    if (storage_mode != StorageMode::PrefixMemory) {
+    if (storage_mode != StorageMode::PartialMemory) {
         work->read_requests = requests;
         return;
     }
@@ -496,7 +496,7 @@ void prepare_batch_cache(StorageMode storage_mode,
 void publish_read_plan(BatchStats* stats,
                        const ReadPlan* plan,
                        StorageMode storage_mode) {
-    if (storage_mode == StorageMode::ByteRange) {
+    if (storage_mode == StorageMode::NoMemory) {
         stats->requested_residues = plan->requested_residues;
     }
     stats->ranges = plan->ranges.size();
