@@ -57,7 +57,7 @@ struct Fixture {
         }
         fasta.close();
         aastore::BuildOptions options;
-        options.encode_threads = 2;
+        options.threads = 2;
         const auto built = aastore::build_fasta(root / "input.fa", root / "store", options);
         check(built.sequences == sequences.size() && built.residues == residues,
               "FASTA build statistics mismatch");

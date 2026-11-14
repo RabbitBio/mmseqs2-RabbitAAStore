@@ -5,6 +5,9 @@ remain `aastore`.
 
 ## Unreleased
 
+- Rename C++ `BuildOptions::encode_threads` to `threads`, matching Python and
+  the other option classes. It remains the total construction thread budget,
+  with a default of 1. Update C++ callers to use `threads` and rebuild.
 - Use RabbitAAStore consistently as the project and display name. Keep the
   `aastore` package, APIs, commands, build options, and database formats unchanged.
 - Add `Store::name_length(id)` and `description_length(id)`, also available in

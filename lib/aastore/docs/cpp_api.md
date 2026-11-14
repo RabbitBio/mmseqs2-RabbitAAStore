@@ -103,7 +103,7 @@ database. The C++ equivalent is:
 
 ```cpp
 aastore::BuildOptions options;
-options.encode_threads = 4;
+options.threads = 4;
 const auto stats = aastore::build_fasta("proteins.fa", "proteins.aastore", options);
 std::cout << stats.sequences << " sequences, " << stats.residues << " residues\n";
 ```
@@ -113,7 +113,7 @@ std::cout << stats.sequences << " sequences, " << stats.residues << " residues\n
 | `overwrite` | `false` | Allow replacement of an existing database. |
 | `write_names` | `true` | Store the first whitespace-delimited field of each FASTA header. |
 | `write_descriptions` | `true` | Store the remaining header text. |
-| `encode_threads` | `1` | Total construction thread budget, including the FASTA parser; must be positive. |
+| `threads` | `1` | Total construction thread budget, including the FASTA parser; must be positive. |
 
 A budget of `1` disables the background pipeline. Larger budgets enable
 parallel encoding and output stages. Encoded chunks are written in input

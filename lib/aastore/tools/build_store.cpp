@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
         options.overwrite = arguments.overwrite;
         options.write_names = arguments.write_names;
         options.write_descriptions = arguments.write_descriptions;
-        options.encode_threads = arguments.threads;
+        options.threads = arguments.threads;
 
         const auto started = std::chrono::steady_clock::now();
         const aastore::BuildStats stats = aastore::build_fasta(

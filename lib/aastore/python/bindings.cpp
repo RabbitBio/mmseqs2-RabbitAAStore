@@ -290,7 +290,7 @@ py::list record_slice(const RecordBatch& records, const py::slice& slice) {
     return result;
 }
 
-// 定义选项和枚举；Python 建库统一使用 threads，映射到 C++ 的 encode_threads。
+// 定义选项和枚举；C++ 和 Python 建库统一使用 threads。
 void bind_options(py::module_& module) {
     py::enum_<StorageMode>(module, "StorageMode")
         .value("NoMemory", StorageMode::NoMemory)
@@ -316,7 +316,7 @@ void bind_options(py::module_& module) {
             py::arg("write_names") = true, py::arg("write_descriptions") = true)
         .def("validate", &BuildOptions::validate,
              "Validate build settings without changing them; invalid settings raise ValueError.")
-        .def_readwrite("threads", &BuildOptions::encode_threads)
+        .def_readwrite("threads", &BuildOptions::threads)
         .def_readwrite("overwrite", &BuildOptions::overwrite)
         .def_readwrite("write_names", &BuildOptions::write_names)
         .def_readwrite("write_descriptions", &BuildOptions::write_descriptions);

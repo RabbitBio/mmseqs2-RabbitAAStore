@@ -119,7 +119,7 @@ void check_valid_options(const Fixture& fixture) {
 // 无效建库配置先于输入检查被拒绝，且不会创建或覆盖数据库。
 void check_invalid_build(const Fixture& fixture) {
     aastore::BuildOptions options;
-    options.encode_threads = 0;
+    options.threads = 0;
     expect_invalid([&] { options.validate(); }, "public BuildOptions validation");
     const auto output = fixture.root / "not-created";
     expect_invalid([&] {

@@ -101,7 +101,7 @@ BuildStats build_fasta(const std::filesystem::path& fasta,
     const bool write_text_columns =
         options.write_names || options.write_descriptions;
     const BuildThreadPlan threads =
-        plan_build_threads(options.encode_threads, write_text_columns);
+        plan_build_threads(options.threads, write_text_columns);
     FastaLineReader input(fasta);
 
     std::filesystem::create_directories(store);

@@ -7,7 +7,7 @@
 namespace aastore {
 
 void BuildOptions::validate() const {
-    if (encode_threads == 0) {
+    if (threads == 0) {
         throw std::invalid_argument("build threads must be greater than zero");
     }
 }

@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
                 std::filesystem::create_directories(database.parent_path());
             }
             aastore::BuildOptions options;
-            options.encode_threads = threads;
+            options.threads = threads;
             const auto start = std::chrono::steady_clock::now();
             const auto built = aastore::build_fasta(input, database, options);
             const auto seconds = std::chrono::duration<double>(

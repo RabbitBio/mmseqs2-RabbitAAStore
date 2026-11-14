@@ -770,7 +770,7 @@ void StoreFixture::check_builder() {
         temp.path() / "descriptions_only_store";
     aastore::BuildOptions descriptions_only_options;
     descriptions_only_options.write_names = false;
-    descriptions_only_options.encode_threads = 4;
+    descriptions_only_options.threads = 4;
     const aastore::BuildStats descriptions_only_built =
         aastore::build_fasta(
             fasta, descriptions_only_path, descriptions_only_options);
@@ -792,7 +792,7 @@ void StoreFixture::check_builder() {
     bool zero_build_threads_rejected = false;
     try {
         aastore::BuildOptions invalid_build_options;
-        invalid_build_options.encode_threads = 0;
+        invalid_build_options.threads = 0;
         (void)aastore::build_fasta(
             fasta, temp.path() / "invalid_threads_store",
             invalid_build_options);

@@ -148,7 +148,7 @@ the binding rejects values outside this range.
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `threads` | `1` | Total build thread budget; corresponds to C++ `encode_threads`. |
+| `threads` | `1` | Total construction thread budget, including the FASTA parser; must be positive. |
 | `overwrite` | `False` | Allow rebuilding an existing database. |
 | `write_names` | `True` | Store sequence names. |
 | `write_descriptions` | `True` | Store sequence descriptions. |
