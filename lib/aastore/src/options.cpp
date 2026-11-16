@@ -1,4 +1,3 @@
-// 文件职责：集中校验公开选项，在打开文件或执行读取前拒绝无效配置。
 #include "aastore/builder.hpp"
 #include "aastore/read_options.hpp"
 

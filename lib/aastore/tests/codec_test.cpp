@@ -1,5 +1,3 @@
-// 文件职责：用独立标量构造的输入验证 5 位字符解码。
-// 测试不同起始位偏移和长度，并以紧邻保护页的缓冲检查越界读写。
 #include "../src/codec.hpp"
 #include "guarded_buffer.hpp"
 
@@ -8,13 +6,11 @@
 
 using aastore_test::GuardedBuffer;
 
-// 验证全部编码和未对齐范围，并用保护页检查越界访问。
 int main() {
     GuardedBuffer packed_buffer;
     GuardedBuffer output_buffer;
     size_t cases = 0;
 
-    // 精确长度缓冲紧邻不可访问页，包括零长度情形。
     for (size_t offset = 0; offset < 16; ++offset) {
         for (size_t length = 0; length <= 263; ++length) {
             const size_t bytes = (5 * (offset + length) + 7) / 8;
@@ -22,7 +18,6 @@ int main() {
             std::fill_n(packed, bytes, uint8_t{0});
             for (size_t i = 0; i < offset + length; ++i) {
                 const unsigned code = (i * 13 + length) % 32;
-                // 使用独立标量编码生成期望输入，并覆盖全部 32 种编码。
                 for (unsigned bit = 0; bit < 5; ++bit) {
                     const size_t position = i * 5 + bit;
                     packed[position / 8] |= static_cast<uint8_t>(

@@ -1,5 +1,3 @@
-// 文件职责：顺序读取 FASTA 行，处理跨缓冲长行并检查、规范化序列字符。
-// 运行时选择标量、AVX2 或 AVX-512 扫描器，同时定位换行并判断是否需要转换。
 #include "fasta_reader.hpp"
 
 #include <array>
@@ -22,7 +20,6 @@ namespace {
 
 constexpr size_t kReadBufferBytes = 4 * 1024 * 1024;
 
-// 创建字符转换表：保留大写与特殊符号，小写转大写，空白删除，其他字符变为 X。
 constexpr std::array<char, 256> make_normalize_table() {
     std::array<char, 256> table{};
     for (char& value : table) value = 'X';
@@ -41,20 +38,15 @@ constexpr std::array<char, 256> make_normalize_table() {
 
 constexpr std::array<char, 256> kNormalizeTable = make_normalize_table();
 
-// 判断字符是否已经属于无需转换的大写字母、星号或连字符。
 bool is_normalized_residue(unsigned char value) {
     return (value >= 'A' && value <= 'Z') || value == '*' || value == '-';
 }
 
-// 扫描一段输入得到的换行位置及规范化状态，不拥有输入数据。
 struct SequenceChunkScan {
-    // 输入段中首个换行的借用指针；nullptr 表示本段未找到换行。
     const char* newline = nullptr;
-    // 换行前的字符（无换行时为整段）是否无需大小写或非法字符转换。
     bool normalized = true;
 };
 
-// 逐字节寻找本块首个换行，并判断换行前字符是否都已规范化。
 SequenceChunkScan scan_sequence_chunk_scalar(const char* input,
                                              size_t length) {
     bool normalized = true;
@@ -68,7 +60,6 @@ SequenceChunkScan scan_sequence_chunk_scalar(const char* input,
 
 #if AASTORE_FASTA_READER_X86_SIMD && \
     (defined(__GNUC__) || defined(__clang__))
-// 使用 AVX2 同时检测 32 个字符的换行和合法性，尾部交给标量扫描器。
 __attribute__((target("avx2")))
 SequenceChunkScan scan_sequence_chunk_avx2(const char* input,
                                            size_t length) {
@@ -110,7 +101,6 @@ SequenceChunkScan scan_sequence_chunk_avx2(const char* input,
     return tail;
 }
 
-// 使用 AVX-512 同时检测 64 个字符，剩余部分交给 AVX2 扫描器。
 __attribute__((target("avx512f,avx512bw")))
 SequenceChunkScan scan_sequence_chunk_avx512(const char* input,
                                              size_t length) {
@@ -153,7 +143,6 @@ SequenceChunkScan scan_sequence_chunk_avx512(const char* input,
 
 using SequenceChunkScanner = SequenceChunkScan (*)(const char*, size_t);
 
-// 探测本机指令集，选择当前 CPU 可安全执行的最快可用扫描实现。
 SequenceChunkScanner detect_sequence_chunk_scanner() {
 #if AASTORE_FASTA_READER_X86_SIMD && \
     (defined(__GNUC__) || defined(__clang__))
@@ -170,10 +159,8 @@ SequenceChunkScanner detect_sequence_chunk_scanner() {
 
 }  // namespace
 
-// 有缓冲的 FASTA 行读取状态；普通行借用读缓冲，跨块长行存入拼接区。
 class FastaLineReader::Impl {
 public:
-    // 打开顺序输入文件，分配读取缓冲并向内核提供顺序访问提示。
     explicit Impl(const std::filesystem::path& path)
         : buffer_(kReadBufferBytes) {
         descriptor_ = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -185,12 +172,10 @@ public:
 #endif
     }
 
-    // 关闭内部持有的 FASTA 文件描述符。
     ~Impl() {
         if (descriptor_ >= 0) ::close(descriptor_);
     }
 
-    // 返回下一行的借用视图，必要时拼接跨块内容，并累计序列字符的规范化状态。
     bool next(std::string_view& line, bool& normalized_sequence) {
         spill_.clear();
         bool line_kind_known = false;
@@ -252,37 +237,26 @@ public:
     }
 
 private:
-    // 本对象持有的 FASTA 输入文件描述符，析构时关闭。
     int descriptor_ = -1;
-    // read 系统调用填充的固定大小字节缓冲。
     std::vector<char> buffer_;
-    // 跨越多个读缓冲的行片段；下一次 next 调用时清空。
     std::string spill_;
-    // buffer_ 中下一未消费字节的下标。
     size_t begin_ = 0;
-    // buffer_ 有效数据末尾的下一下标，未消费区间为 [begin_, end_)。
     size_t end_ = 0;
-    // read 是否已经返回零；此时仍可能需要返回 spill_ 中的最后一行。
     bool eof_ = false;
-    // 根据 CPU 能力选定的扫描函数，同时定位换行和检查规范化状态。
     SequenceChunkScanner sequence_scanner_ =
         detect_sequence_chunk_scanner();
 };
 
-// 创建持有文件描述符和行缓冲的内部读取实现。
 FastaLineReader::FastaLineReader(const std::filesystem::path& path)
     : impl_(std::make_unique<Impl>(path)) {}
 
-// 释放内部读取器及其输入文件和缓冲。
 FastaLineReader::~FastaLineReader() = default;
 
-// 获取下一行及其规范化标志；视图在下次读取前有效。
 bool FastaLineReader::next(std::string_view& line,
                            bool& normalized_sequence) {
     return impl_->next(line, normalized_sequence);
 }
 
-// 按转换表删除空白、统一大小写并替换无效字符，结果写入可复用字符串。
 void normalize_sequence_line(std::string_view line,
                              std::string& normalized_line) {
     normalized_line.resize(line.size());

@@ -1,5 +1,3 @@
-// 文件职责：读取连续 ID 区间，按残基位置分片并直接解码到 Batch 或逐序列输出区。
-// packed 暂存缓冲由内部有界复用，从常驻数据或连续 pread 取得编码数据。
 #include "store_io.hpp"
 
 #include "metadata.hpp"
@@ -14,7 +12,6 @@
 namespace aastore {
 namespace {
 
-// 计算线程的输出边界，并对齐到 8 个 residue 的编码边界。
 uint64_t sequential_worker_boundary(uint64_t residue_begin,
                                     uint64_t residue_count,
                                     size_t worker_count,
@@ -29,22 +26,16 @@ uint64_t sequential_worker_boundary(uint64_t residue_begin,
     return (absolute & ~uint64_t{7}) - residue_begin;
 }
 
-// 连续 ID 读取的整体字符区间及分片规模，不存放序列数据或文件资源。
 struct SequentialReadState {
-    // 第一条请求序列在全库字符流中的起点。
     uint64_t residue_begin = 0;
-    // 整个请求区间的字符总数，也是无分隔符输出区的字节数。
     uint64_t residue_count = 0;
-    // 根据数据量和线程预算选定的分片数；没有字符时保持为零。
     size_t worker_count = 0;
 };
 
 using PackedBuffer = std::vector<uint8_t, NoInitAllocator<uint8_t>>;
 constexpr size_t kRetainedSequentialBytes = 64ULL * 1024ULL * 1024ULL;
-// 调用线程持有暂存区，各工作线程只使用自己的槽位；全部 join 后才允许下一次复用。
 thread_local std::vector<PackedBuffer> retained_buffers;
 
-// 校验连续 ID 区间并建立无分隔符的连续 residue 输出布局。
 void prepare_sequential_layout(const Metadata* metadata,
                                uint64_t sequence_count,
                                StorageMode storage_mode,
@@ -115,7 +106,6 @@ void prepare_sequential_layout(const Metadata* metadata,
         1, std::min(requested_workers, useful_workers));
 }
 
-// 复用调用线程的 packed 缓冲，总保留容量不超过 64 MiB；更大读取使用临时缓冲。
 std::vector<PackedBuffer>& prepare_sequential_buffers(
         const StoreReadContext& store,
         const SequentialReadState& state,
@@ -166,7 +156,6 @@ std::vector<PackedBuffer>& prepare_sequential_buffers(
     return buffers;
 }
 
-// 将已读分片与序列边界相交，直接解码到逐序列输出地址；长序列可跨线程分片。
 void decode_sequential_outputs(const SequentialReadState& state,
                                const Batch& batch,
                                const SequenceRequest& request,
@@ -195,7 +184,6 @@ void decode_sequential_outputs(const SequentialReadState& state,
     }
 }
 
-// 汇总顺序读取各线程的读取、解码和范围统计。
 void publish_sequential_stats(
         const SequentialReadState* state,
         uint64_t worker_wall_ns,
@@ -231,7 +219,6 @@ void publish_sequential_stats(
 
 }  // namespace
 
-// 准备连续输出布局，各线程读取并解码自己的残基分片，最后汇总统计与异常。
 void sequential_get_from_store(const StoreReadContext& store,
                                SequenceId first_sequence,
                                SequenceId end_sequence,

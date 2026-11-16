@@ -1,5 +1,3 @@
-// 文件职责：验证 io_uring 的范围读取、ring 与槽位复用、嵌套调用和异常收尾。
-// 同时检查每个 ring 的线程归属，以及协作 CPU 工作与 I/O 完成处理均能持续推进。
 #include "../src/io_uring_backend.hpp"
 
 #include <algorithm>
@@ -18,7 +16,6 @@ using aastore::IoUringStats;
 using aastore::RangeCompletion;
 using aastore::read_ranges_io_uring;
 
-// 条件不成立时抛出带说明的测试异常。
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -27,7 +24,6 @@ struct File {
     int fd = -1;
     std::vector<uint8_t> bytes;
 
-    // 创建并解除目录链接的临时文件，写入可复现的测试字节。
     explicit File(unsigned seed) : bytes(1024 * 1024) {
         char path[] = "/tmp/aastore_uring_test_XXXXXX";
         fd = ::mkstemp(path);
@@ -44,11 +40,9 @@ struct File {
             offset += static_cast<size_t>(result);
         }
     }
-    // 关闭测试文件，释放其匿名临时存储。
     ~File() { if (fd >= 0) ::close(fd); }
 };
 
-// 扫描当前进程描述符，统计指向 io_uring 的项。
 size_t ring_count() {
     size_t count = 0;
     for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
@@ -68,14 +62,12 @@ struct CheckedReadContext {
     bool initial = false;
 };
 
-// 记录首次提交通知已到达，供完成回调校验顺序。
 bool mark_initial_submit(void* opaque, size_t worker) {
     check(worker == 0, "unexpected initial submit worker");
     static_cast<CheckedReadContext*>(opaque)->initial = true;
     return false;
 }
 
-// 验证完成回调的线程、顺序、长度和内容，再执行可选附加检查。
 void check_read_completion(void* opaque, size_t worker, size_t index,
                            const uint8_t* data, uint64_t size) {
     CheckedReadContext* ctx = static_cast<CheckedReadContext*>(opaque);
@@ -95,12 +87,9 @@ void check_read_completion(void* opaque, size_t worker, size_t index,
     }
 }
 
-// 提供无需执行操作的首次提交通知回调。
 bool ignore_initial_submit(void*, size_t) { return false; }
-// 提供忽略读取内容的完成回调。
 void ignore_completion(void*, size_t, size_t, const uint8_t*, uint64_t) {}
 
-// 执行单 ring 读取并核对全部范围、队列深度和提交完成计数。
 void read_checked(const File& file,
                           const std::vector<ByteRange>& ranges,
                           size_t depth,
@@ -126,7 +115,6 @@ void read_checked(const File& file,
     check(stats.empty_waits <= stats.wait_calls, "invalid empty-CQ count");
 }
 
-// 确认预期的运行时错误已经被观察到。
 void expect_runtime_failure(bool failed) {
     check(failed, "expected failure was not reported");
 }
@@ -135,7 +123,6 @@ struct ReuseBufferContext {
     const uint8_t* previous = nullptr;
 };
 
-// 验证连续小范围读取复用了同一缓冲地址。
 void check_reused_buffer(void* opaque, size_t, size_t,
                          const uint8_t* data, uint64_t) {
     ReuseBufferContext* ctx = static_cast<ReuseBufferContext*>(opaque);
@@ -148,7 +135,6 @@ struct RingCountContext {
     size_t expected = 0;
 };
 
-// 校验回调期间进程持有的 ring 数量。
 void check_ring_count(void* opaque, size_t, size_t,
                       const uint8_t*, uint64_t) {
     const RingCountContext* ctx =
@@ -162,7 +148,6 @@ struct NestedReadContext {
     RingCountContext ring_count;
 };
 
-// 从完成回调中发起嵌套读取，并检查嵌套 ring 的生命周期。
 void run_nested_read(void* opaque, size_t, size_t,
                      const uint8_t*, uint64_t) {
     NestedReadContext* ctx = static_cast<NestedReadContext*>(opaque);
@@ -170,13 +155,11 @@ void run_nested_read(void* opaque, size_t, size_t,
         *ctx->file, *ctx->ranges, 1, check_ring_count, &ctx->ring_count);
 }
 
-// 主动从完成回调抛出异常，验证后端异常收尾。
 void throw_completion(void*, size_t, size_t,
                       const uint8_t*, uint64_t) {
     throw std::runtime_error("callback failure");
 }
 
-// 主动从首次提交通知抛出异常，验证后端清理。
 bool throw_initial_submit(void*, size_t) {
     throw std::runtime_error("initial callback failure");
 }
@@ -188,7 +171,6 @@ struct ConcurrentReadContext {
     std::atomic<bool>* failed = nullptr;
 };
 
-// 交替并发读取两个测试文件，记录线程是否出现异常。
 void concurrent_read_worker(ConcurrentReadContext* ctx,
                             size_t worker) noexcept {
     try {
@@ -210,7 +192,6 @@ struct OwnerContext {
     std::vector<size_t> initial_calls;
 };
 
-// 记录各分区首次协作回调的线程标识和调用次数，不追加协作任务。
 bool record_owner(void* opaque, size_t worker) {
     auto* ctx = static_cast<OwnerContext*>(opaque);
     check(worker < ctx->owners.size(), "initial callback exceeds thread budget");
@@ -219,7 +200,6 @@ bool record_owner(void* opaque, size_t worker) {
     return false;
 }
 
-// 检查完成回调仍由提交请求的 ring 所属线程执行，并核对范围内容与完成计数。
 void check_owner_completion(void* opaque, size_t worker, size_t index,
                             const uint8_t* data, uint64_t size) {
     auto* ctx = static_cast<OwnerContext*>(opaque);
@@ -235,7 +215,6 @@ void check_owner_completion(void* opaque, size_t worker, size_t index,
     ++ctx->completed[worker];
 }
 
-// 验证多 ring 独占各自线程、调用线程计入预算，且全部分区读取完整。
 void check_owners(const File& file, const std::vector<ByteRange>& ranges,
                   size_t threads) {
     const size_t workers = std::max<size_t>(1, std::min(threads, ranges.size()));
@@ -273,7 +252,6 @@ struct CooperativeContext {
     std::thread::id owner = std::this_thread::get_id();
 };
 
-// 保持协作 CPU 工作直到全部读取完成，再执行三个尾部片段；可在指定进度抛出异常。
 bool cooperative_work(void* opaque, size_t worker) {
     auto* ctx = static_cast<CooperativeContext*>(opaque);
     check(worker == 0 && std::this_thread::get_id() == ctx->owner,
@@ -291,7 +269,6 @@ bool cooperative_work(void* opaque, size_t worker) {
     return true;
 }
 
-// 验证协作工作不阻塞完成处理和补读，尾部任务能排空，后期异常能正确传播。
 void check_cooperative_work(const File& file,
                             const std::vector<ByteRange>& ranges,
                             size_t depth, bool fail) {
@@ -324,7 +301,6 @@ void check_cooperative_work(const File& file,
 
 }  // namespace
 
-// 覆盖 ring 复用、嵌套读取、异常收尾、并发和协作轮询路径。
 int main() {
     try {
         File first(13), second(91);
@@ -392,8 +368,6 @@ int main() {
         RingCountContext nested_ring_count{initial_rings + 2};
         NestedReadContext nested_ctx{&second, &one, nested_ring_count};
         read_checked(first, one, 1, run_nested_read, &nested_ctx);
-        // 深度为 1 时，单槽可使用完整的 16 MiB 保留预算；
-        // 300 KiB 范围应继续使用线程本地 ring，而不是创建临时 ring。
         RingCountContext large_ring_count{initial_rings + 1};
         read_checked(
             first, {{0, 300 * 1024, 0, 1}}, 1,

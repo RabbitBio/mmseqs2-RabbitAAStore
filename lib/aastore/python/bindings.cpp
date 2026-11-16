@@ -1,5 +1,3 @@
-// 文件职责：将现有 C++ 建库、读取和批次对象绑定到 Python，不重写核心算法。
-// 长操作释放 GIL；缓冲视图保留所有者，直接输出在写入前校验容量和重叠。
 #include "aastore/store.hpp"
 
 #include <pybind11/pybind11.h>
@@ -20,7 +18,6 @@ using namespace aastore;
 
 namespace {
 
-// 校验原生长度可由 Python 的索引和缓冲协议表示。
 py::ssize_t python_size(uint64_t size) {
     if (size > static_cast<uint64_t>(std::numeric_limits<py::ssize_t>::max())) {
         throw std::overflow_error("size exceeds the Python address space");
@@ -28,7 +25,6 @@ py::ssize_t python_size(uint64_t size) {
     return static_cast<py::ssize_t>(size);
 }
 
-// 支持 Python 负索引，越界时抛出 IndexError。
 size_t checked_index(py::ssize_t index, uint64_t size) {
     const py::ssize_t count = python_size(size);
     if (index < 0) index += count;
@@ -36,19 +32,16 @@ size_t checked_index(py::ssize_t index, uint64_t size) {
     return static_cast<size_t>(index);
 }
 
-// 返回 UTF-8 字符串副本，空视图无需访问数据指针。
 py::str copy_text(std::string_view text) {
     return py::str(text.empty() ? "" : text.data(), text.size());
 }
 
-// 创建惰性的序列迭代器，由 Python 持有并延长批次对象的生命周期。
 py::object sequence_iterator(py::object owner) {
     PyObject* iterator = PySeqIter_New(owner.ptr());
     if (iterator == nullptr) throw py::error_already_set();
     return py::reinterpret_steal<py::object>(iterator);
 }
 
-// 导出只读 arena；Python buffer 协议会延长批次对象的生命周期。
 template <typename T>
 py::buffer_info batch_buffer(T& batch) {
     return py::buffer_info(
@@ -56,14 +49,12 @@ py::buffer_info batch_buffer(T& batch) {
         1, "B", 1, {python_size(batch.storage.size())}, {1}, true);
 }
 
-// 布局数组不复制；缓冲导出对象持有原批次，确保 memoryview 的地址持续有效。
 struct BatchLayoutBuffer {
     py::object owner;
     const uint64_t* data;
     py::ssize_t count;
 };
 
-// 使用私有缓冲导出器为 offsets/lengths 保活，避免返回借用裸地址的 memoryview。
 void bind_layout_buffer(py::module_& module) {
     py::class_<BatchLayoutBuffer>(module, "_BatchLayoutBuffer", py::buffer_protocol())
         .def_buffer([](BatchLayoutBuffer& buffer) {
@@ -74,7 +65,6 @@ void bind_layout_buffer(py::module_& module) {
         });
 }
 
-// 布局值以本机 uint64 表示字节偏移或字节长度，与 storage 使用相同所有者。
 template <typename T>
 py::memoryview batch_layout(py::object owner, bool offsets) {
     const auto& batch = owner.cast<const T&>();
@@ -84,7 +74,6 @@ py::memoryview batch_layout(py::object owner, bool offsets) {
         std::move(owner), values.data(), count}));
 }
 
-// 按批次索引复制一条字符串，避免将整个 arena 自动转换为字符串列表。
 template <typename T>
 py::str batch_item(const T& batch, py::ssize_t index) {
     const size_t i = checked_index(index, batch.size());
@@ -92,7 +81,6 @@ py::str batch_item(const T& batch, py::ssize_t index) {
     return copy_text(batch.view(i));
 }
 
-// 以 Python memoryview 切片借用一条记录的字节，切片仍保留整个批次。
 template <typename T>
 py::object batch_view(py::object owner, py::ssize_t index) {
     const auto& batch = owner.cast<const T&>();
@@ -103,7 +91,6 @@ py::object batch_view(py::object owner, py::ssize_t index) {
     return storage[py::slice(offset, offset + length, 1)];
 }
 
-// 复制 Python 切片选择的条目，按切片顺序返回列表。
 template <typename T>
 py::list batch_slice(const T& batch, const py::slice& slice) {
     py::ssize_t begin, end, step, count;
@@ -118,7 +105,6 @@ py::list batch_slice(const T& batch, const py::slice& slice) {
     return result;
 }
 
-// 为序列和文本批次提供统一的索引、切片、统计和只读缓冲接口。
 template <typename T>
 void bind_batch(py::module_& module, const char* name) {
     py::class_<T>(module, name, py::buffer_protocol(),
@@ -145,29 +131,23 @@ void bind_batch(py::module_& module, const char* name) {
         .def_buffer(&batch_buffer<T>);
 }
 
-// 包装 Store 的关闭语义；在途读取持有独立 shared_ptr，不受同时 close 的影响。
 class PythonStore {
 public:
-    // 接管已经打开的原生库。
     explicit PythonStore(std::shared_ptr<Store> store) : store_(std::move(store)) {}
 
-    // 在持有 GIL 时取得本次操作的资源引用，拒绝关闭后的新读取。
     std::shared_ptr<Store> acquire() const {
         if (!store_) throw py::value_error("Store is closed");
         return store_;
     }
 
-    // 关闭本对象；已经开始的读取在其资源引用释放后才完成真正回收。
     void close() { store_.reset(); }
 
-    // 判断是否已关闭。
     bool closed() const { return !store_; }
 
 private:
     std::shared_ptr<Store> store_;
 };
 
-// 从 ID 列表取得长度，同时在申请输出缓冲前验证全部 ID。
 std::vector<uint64_t> request_lengths(const Store& store,
                                       const std::vector<SequenceId>& ids) {
     std::vector<uint64_t> lengths;
@@ -176,7 +156,6 @@ std::vector<uint64_t> request_lengths(const Store& store,
     return lengths;
 }
 
-// 验证连续半开区间，并取得每条序列的长度。
 std::vector<uint64_t> interval_lengths(const Store& store,
                                        SequenceId begin, SequenceId end) {
     if (begin > end || end > store.size()) throw py::index_error("invalid sequence interval");
@@ -191,7 +170,6 @@ struct WritableOutputs {
     std::vector<py::buffer_info> buffers;
     std::vector<char*> pointers;
 
-    // 申请并固定可写缓冲；拒绝容量不足、非连续字节视图及相互重叠的写入区。
     WritableOutputs(const std::vector<uint64_t>& lengths, const py::iterable& outputs) {
         buffers.reserve(lengths.size());
         pointers.reserve(lengths.size());
@@ -236,7 +214,6 @@ struct WritableOutputs {
     }
 };
 
-// 直接读取到固定的 Python 输出区；释放 GIL 前全部缓冲均已校验并取得引用。
 BatchStats batch_into(const PythonStore& self, const std::vector<SequenceId>& ids,
                        const py::iterable& outputs, ReadOptions options) {
     const auto store = self.acquire();
@@ -246,13 +223,11 @@ BatchStats batch_into(const PythonStore& self, const std::vector<SequenceId>& id
     return store->get_into(ids, prepared.pointers, options);
 }
 
-// Python 字符串不可原地修改，单条直接输出使用调用方提供的可写字节缓冲。
 BatchStats single_into(const PythonStore& self, SequenceId id,
                        py::object output, ReadOptions options) {
     return batch_into(self, {id}, py::make_tuple(std::move(output)), options);
 }
 
-// 将连续区间读取到 Python 输出区，保持与 C++ 接口相同的 pread 路径。
 BatchStats sequential_into(const PythonStore& self, SequenceId begin, SequenceId end,
                             const py::iterable& outputs, ReadOptions options) {
     const auto store = self.acquire();
@@ -262,7 +237,6 @@ BatchStats sequential_into(const PythonStore& self, SequenceId begin, SequenceId
     return store->sequential_get_into(begin, end, prepared.pointers, options);
 }
 
-// 按字段掩码复制一条记录，未请求的字段不出现在字典中。
 py::dict record_item(const RecordBatch& records, py::ssize_t index) {
     const size_t i = checked_index(index, records.size());
     py::dict result;
@@ -276,7 +250,6 @@ py::dict record_item(const RecordBatch& records, py::ssize_t index) {
     return result;
 }
 
-// 返回记录切片的字典列表。
 py::list record_slice(const RecordBatch& records, const py::slice& slice) {
     py::ssize_t begin, end, step, count;
     if (!slice.compute(python_size(records.size()), &begin, &end, &step, &count)) {
@@ -290,7 +263,6 @@ py::list record_slice(const RecordBatch& records, const py::slice& slice) {
     return result;
 }
 
-// 定义选项和枚举；C++ 和 Python 建库统一使用 threads。
 void bind_options(py::module_& module) {
     py::enum_<StorageMode>(module, "StorageMode")
         .value("NoMemory", StorageMode::NoMemory)
@@ -358,7 +330,6 @@ void bind_options(py::module_& module) {
 #undef READ_OPTION
 }
 
-// 导出只读统计字段，避免 Python 修改批次中的计数。
 void bind_stats(py::module_& module) {
     py::class_<BuildStats>(module, "BuildStats", "Read-only counts and byte sizes of a completed build.")
         .def_readonly("sequences", &BuildStats::sequences)
@@ -392,7 +363,6 @@ void bind_stats(py::module_& module) {
 #undef TEXT_STAT
 }
 
-// 绑定记录的按字段访问，子批次的引用策略确保父批次存活。
 void bind_records(py::module_& module) {
     py::class_<RecordBatch>(module, "RecordBatch", "Selected record fields with lazy dictionaries and byte-batch access.")
         .def("__len__", [](const RecordBatch& batch) { return python_size(batch.size()); })
@@ -421,7 +391,6 @@ void bind_records(py::module_& module) {
                                py::return_value_policy::reference_internal);
 }
 
-// 打开库或执行读取时释放 GIL，选项按值复制，避免其他 Python 线程修改在途配置。
 void bind_store(py::module_& module) {
     py::class_<PythonStore>(module, "Store", "Read a FASTA store; supports with-statements and concurrent read-only calls.")
         .def(py::init([](const std::filesystem::path& path, StoreOptions options) {
@@ -498,7 +467,6 @@ void bind_store(py::module_& module) {
 
 }  // namespace
 
-// 初始化 Python 扩展；建库和读取仍由原生 RabbitAAStore 实现。
 PYBIND11_MODULE(_aastore, module) {
     module.doc() = "RabbitAAStore C++ bindings for compact FASTA storage";
     module.attr("__version__") = AASTORE_PYTHON_VERSION;

@@ -1,5 +1,3 @@
-// 文件职责：为兼容性测试提供延迟执行请求的私有 liburing 替身。
-// 仅测试目标包含本目录，生产库和安装 SDK 不使用此头文件。
 #ifndef AASTORE_TEST_LIBURING_H
 #define AASTORE_TEST_LIBURING_H
 

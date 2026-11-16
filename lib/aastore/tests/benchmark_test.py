@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# 文件职责：使用临时生成的小数据验证 benchmark 命令行和冷缓存矩阵脚本。
-# 检查分批边界、不同模式与线程数的输出一致性、非法参数及结果统计。
 """Exercise the benchmark CLI on generated data, not a publication dataset."""
 
 import argparse
@@ -16,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 from run_cold_matrix import parse_metrics
 
 
-# 限时执行命令，合并输出并检查退出码，成功后提取统计字段。
 def checked(command):
     result = subprocess.run([str(value) for value in command], stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, universal_newlines=True, timeout=120)
@@ -25,7 +22,6 @@ def checked(command):
     return parse_metrics(result.stdout)
 
 
-# 按请求顺序独立计算 FNV-1a 校验值，纳入小端 ID、长度和记录内容。
 def digest(records, ids):
     value = 14695981039346656037
     for index in ids:
@@ -36,7 +32,6 @@ def digest(records, ids):
     return str(value)
 
 
-# 创建测试库并运行模式、线程和后端组合，检查分批、校验值、参数拒绝及矩阵输出。
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("build", type=Path)

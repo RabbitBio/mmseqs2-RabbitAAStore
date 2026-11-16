@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# 文件职责：按抽样比例、线程数和前缀驻留比例运行独立进程冷缓存实验。
-# 保存实验配置、逐例日志和 CSV，并检查同组请求及输出校验值一致。
 """Paired, fresh-process RabbitAAStore random-access pilot. Standard library only."""
 
 import argparse
@@ -20,7 +18,6 @@ import sys
 import time
 
 
-# 解析命令行正整数，拒绝零和负数。
 def positive(value):
     result = int(value)
     if result <= 0:
@@ -28,7 +25,6 @@ def positive(value):
     return result
 
 
-# 校验抽样百分比位于 (0, 100] 且为有限值，保留原字符串供基准程序解析。
 def percentage(value):
     result = float(value)
     if not math.isfinite(result) or not 0 < result <= 100:
@@ -36,12 +32,10 @@ def percentage(value):
     return value
 
 
-# 从程序输出中提取 key=value 形式的统计字段。
 def parse_metrics(text):
     return dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
 
 
-# 校验并规范化 [0, 100) 的前缀比例，便于识别重复值；100% 单独作为全内存模式。
 def prefix_percentage(value):
     try:
         number = Decimal(value)
@@ -52,14 +46,12 @@ def prefix_percentage(value):
     return "0" if number == 0 else format(number.normalize(), "f")
 
 
-# 取主机可用内存与各级可见 cgroup 剩余额度中的最小值。
 def available_memory():
     values = {}
     for line in Path("/proc/meminfo").read_text().splitlines():
         key, value = line.split(":", 1)
         values[key] = int(value.split()[0]) * 1024
     available = values["MemAvailable"]
-    # 同时考虑 cgroup v1/v2 及所有可见祖先节点的内存限制。
     for line in Path("/proc/self/cgroup").read_text().splitlines():
         _, controllers, relative = line.split(":", 2)
         if controllers == "":
@@ -85,7 +77,6 @@ def available_memory():
     return available
 
 
-# 打乱实验组合后逐例运行，验证冷缓存、后端、驻留预算和配对结果，再汇总指标。
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("store", type=Path)
@@ -173,7 +164,6 @@ def main():
             preload_budget = max(1, packed_bytes) if mode == "full" else resident_budget
             command += ["--memory-bytes", str(preload_budget)]
             (args.output / (case + ".command.json")).write_text(json.dumps(command) + "\n")
-            # 保守的启动检查，并非对任意长度序列都成立的内存上界。
             sample_count = max(1, int(records * float(percent) / 100)) if records else 0
             estimate = (files["meta.bin"]["bytes"] + sample_count * 120 +
                         2 * args.batch_bytes + args.io_buffer_bytes + 1024**3)

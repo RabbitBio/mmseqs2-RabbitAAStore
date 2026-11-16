@@ -26,8 +26,8 @@ size_t parse_threads(const std::string& text) {
 }
 
 void print_sequence(aastore::SequenceId id, std::string_view sequence) {
-    std::cout << "  ID=" << id << " 长度=" << sequence.size()
-              << " 序列=" << sequence.substr(0, 60);
+    std::cout << "  ID=" << id << " length=" << sequence.size()
+              << " sequence=" << sequence.substr(0, 60);
     if (sequence.size() > 60) std::cout << "...";
     std::cout << '\n';
 }
@@ -58,29 +58,29 @@ int main(int argc, char** argv) {
             const auto built = aastore::build_fasta(input, database, options);
             const auto seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - start).count();
-            std::cout << "建库完成：" << built.sequences << " 条序列，"
-                      << built.residues << " 个残基，耗时 " << seconds << " 秒\n";
+            std::cout << "Database built: " << built.sequences << " sequences, "
+                      << built.residues << " residues, elapsed time: " << seconds << " s\n";
         } else {
-            std::cout << "复用已有数据库：" << database.string() << '\n';
+            std::cout << "Reusing existing database: " << database.string() << '\n';
         }
 
         aastore::Store store(database);
         if (store.size() == 0) throw std::runtime_error("the database is empty");
-        std::cout << "数据库：" << store.size() << " 条序列，"
-                  << store.total_residues() << " 个残基，解码路径 "
+        std::cout << "Database: " << store.size() << " sequences, "
+                  << store.total_residues() << " residues, decoding kernel: "
                   << store.decode_kernel_name() << '\n';
 
         aastore::ReadOptions reads;
         reads.threads = threads;
         reads.io_backend = aastore::IoBackend::Auto;
 
-        std::cout << "单条读取：\n";
+        std::cout << "Single-sequence retrieval:\n";
         const auto single = store.get(0, reads);
         print_sequence(0, single.view(0));
 
         const std::vector<aastore::SequenceId> ids{store.size() - 1, 0, store.size() - 1};
         const auto batch = store.get(ids, reads);
-        std::cout << "乱序批量读取（保留重复 ID）：\n";
+        std::cout << "Batch retrieval with unordered IDs (duplicates preserved):\n";
         for (size_t i = 0; i < batch.size(); ++i) print_sequence(ids[i], batch.view(i));
         if (batch.size() != ids.size() || batch.view(0) != batch.view(2) ||
             batch.view(1) != single.view(0)) {
@@ -88,19 +88,19 @@ int main(int argc, char** argv) {
         }
 
         const auto sequential = store.sequential_get(0, std::min<uint64_t>(3, store.size()));
-        std::cout << "连续读取前 " << sequential.size() << " 条：\n";
+        std::cout << "Sequential retrieval of the first " << sequential.size() << " sequences:\n";
         for (size_t i = 0; i < sequential.size(); ++i) print_sequence(i, sequential.view(i));
         if (sequential.view(0) != single.view(0)) {
             throw std::runtime_error("unexpected sequential data");
         }
 
         const auto records = store.batch_get_records({0, store.size() - 1}, aastore::RecordFields::All, reads);
-        std::cout << "首尾记录的名称和描述：\n";
+        std::cout << "Names and descriptions of the first and last records:\n";
         for (size_t i = 0; i < records.size(); ++i) {
-            std::cout << "  名称=" << records.name_view(i)
-                      << " 描述=" << records.description_view(i) << '\n';
+            std::cout << "  name=" << records.name_view(i)
+                      << " description=" << records.description_view(i) << '\n';
         }
-        std::cout << "示例完成，数据库保留在 " << database.string() << '\n';
+        std::cout << "Example complete. Database retained at " << database.string() << '\n';
     } catch (const std::exception& error) {
         std::cerr << "RabbitAAStore example: " << error.what() << '\n';
         return 1;

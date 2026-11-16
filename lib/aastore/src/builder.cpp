@@ -1,5 +1,3 @@
-// 文件职责：组织 FASTA 解析、序列编码、文本写出及建库结果发布。
-// 使用临时文件完成构建与同步，再替换正式文件；失败时清理本次临时输出。
 #include "aastore/builder.hpp"
 
 #include "builder_writer.hpp"
@@ -17,7 +15,6 @@
 namespace aastore {
 namespace {
 
-// 按覆盖策略检查目标文件，再将临时文件重命名到目标路径。
 void replace_file(const std::filesystem::path& from,
                   const std::filesystem::path& to,
                   bool overwrite) {
@@ -28,7 +25,6 @@ void replace_file(const std::filesystem::path& from,
     std::filesystem::rename(from, to);
 }
 
-// 打开指定路径并执行 fsync，重试中断且报告同步或关闭失败。
 void sync_path(const std::filesystem::path& path, int open_flags) {
     const int descriptor = ::open(path.c_str(), open_flags);
     if (descriptor < 0) {
@@ -53,17 +49,14 @@ void sync_path(const std::filesystem::path& path, int open_flags) {
     }
 }
 
-// 同步普通文件的数据与元数据，并报告 fsync 或关闭错误。
 void sync_file(const std::filesystem::path& path) {
     sync_path(path, O_RDONLY | O_CLOEXEC);
 }
 
-// 同步目录项，使已完成的文件重命名得到持久化处理。
 void sync_directory(const std::filesystem::path& path) {
     sync_path(path, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
 }
 
-// 删除覆盖建库后不再启用的旧列文件；路径不存在时无需处理。
 void remove_file_if_present(const std::filesystem::path& path) {
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -73,7 +66,6 @@ void remove_file_if_present(const std::filesystem::path& path) {
     }
 }
 
-// 尽力删除本次建库的临时文件，不让清理错误覆盖原始异常。
 void cleanup_build_files(
         const std::array<std::filesystem::path, 6>& paths) noexcept {
     std::error_code error;
@@ -83,7 +75,6 @@ void cleanup_build_files(
     }
 }
 
-// 取得路径的父目录；未显式指定父目录时使用当前工作目录。
 std::filesystem::path parent_directory(
         const std::filesystem::path& path) {
     return path.parent_path().empty()
@@ -93,7 +84,6 @@ std::filesystem::path parent_directory(
 
 }  // namespace
 
-// 顺序解析 FASTA，驱动序列与文本写入器，完成文件同步和发布并返回建库统计。
 BuildStats build_fasta(const std::filesystem::path& fasta,
                        const std::filesystem::path& store,
                        const BuildOptions& options) {

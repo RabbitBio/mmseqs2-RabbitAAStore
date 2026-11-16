@@ -1,4 +1,3 @@
-# 文件职责：用临时 FASTA 验证 Python 建库、读取、缓冲生命周期、GIL 和并发关闭。
 import array
 from concurrent.futures import ThreadPoolExecutor
 import gc
@@ -12,7 +11,6 @@ import aastore
 
 
 class PythonInterfaceTest(unittest.TestCase):
-    # 创建含空序列、长序列和 UTF-8 文本的可复现小库。
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory(prefix="aastore-python-test-")
@@ -39,12 +37,10 @@ class PythonInterfaceTest(unittest.TestCase):
                     raise
                 cls.uring_reason = str(error)
 
-    # 释放临时测试数据库。
     @classmethod
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    # 用预算触发待测驻留路径，模式本身不再是开库选项。
     @staticmethod
     def preload_for_mode(mode, packed_bytes, partial_bytes=None):
         return {
@@ -60,7 +56,6 @@ class PythonInterfaceTest(unittest.TestCase):
             threads=4, resident_names=True, resident_descriptions=True,
         ))
 
-    # 检查默认诊断关闭，启用后可以观测解码阶段。
     def check_stats(self, stats, diagnostics):
         self.assertEqual(stats.diagnostics_collected, diagnostics)
         if diagnostics and stats.requested_residues:
@@ -73,7 +68,6 @@ class PythonInterfaceTest(unittest.TestCase):
                           "merged_gaps", "free_merges", "overread_bytes"):
                 self.assertEqual(getattr(stats, field), 0, field)
 
-    # 用布局视图直接切分 arena，长度按原始字节计算，不依赖字符串索引接口。
     def check_layout(self, batch, values, terminated=False):
         offsets, lengths = batch.offsets, batch.lengths
         encoded = [value.encode("utf-8") for value in values]
@@ -109,7 +103,6 @@ class PythonInterfaceTest(unittest.TestCase):
             with self.assertRaises(AttributeError):
                 setattr(batch, field, [])
 
-    # 核对建库统计、选项覆盖、文本列开关及覆盖已有库的行为。
     def test_build_and_options(self):
         self.assertEqual(self.build_stats.sequences, len(self.sequences))
         self.assertEqual(self.build_stats.residues, sum(map(len, self.sequences)))
@@ -145,7 +138,6 @@ class PythonInterfaceTest(unittest.TestCase):
             with self.assertRaises(TypeError):
                 options_type(unknown_option=True)
 
-    # 两种索引加载方式保持记录顺序、重复 ID 和顺读结果一致，且 Read 不映射索引文件。
     def test_index_load_modes(self):
         ids = [130, 1, 0, 2, 1, 4]
         expected = [dict(name=self.names[i], description=self.descriptions[i],
@@ -173,7 +165,6 @@ class PythonInterfaceTest(unittest.TestCase):
                         self.assertEqual(index_paths & mapped,
                                          index_paths if mode == aastore.IndexLoadMode.Mmap else set())
 
-    # 无效配置在空请求和各读取路径上都被拒绝，且不创建库或修改输出。
     def test_option_validation(self):
         for options_type in (aastore.BuildOptions, aastore.StoreOptions, aastore.ReadOptions):
             self.assertIsNone(options_type().validate())
@@ -233,7 +224,6 @@ class PythonInterfaceTest(unittest.TestCase):
                                 store.sequential_get_into(1, end, buffers, options)
                             self.assertEqual(buffers, [b"#" * len(self.sequences[i]) for i in range(1, end)])
 
-    # 单条和批量 get 都返回 Batch；直接输出复用调用方内存而不修改尾部。
     def test_unified_get(self):
         for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
                      aastore.StorageMode.FullMemory):
@@ -275,7 +265,6 @@ class PythonInterfaceTest(unittest.TestCase):
             gc.collect()
             self.assertEqual(bytes(view), self.sequences[1].encode())
 
-    # 保留零线程、零队列和零预算的既有语义，校验不负责探测后端可用性。
     def test_zero_option_budgets(self):
         options = aastore.ReadOptions(
             threads=0, io_queue_depth=0, io_buffer_bytes=0, input_sorted=True,
@@ -302,7 +291,6 @@ class PythonInterfaceTest(unittest.TestCase):
                 store.get_into(ids, buffers, options)
                 self.assertEqual(buffers, [sequence.encode() for sequence in expected])
 
-    # 预算边界决定实际驻留方式，达到全量时走无序请求的全内存快速路径。
     def test_preload_budget(self):
         packed = self.build_stats.packed_bytes
         ids = [5, 1, 2, 0, 1]
@@ -346,7 +334,6 @@ class PythonInterfaceTest(unittest.TestCase):
         self.assertFalse(hasattr(aastore.StorageMode, "ByteRange"))
         self.assertFalse(hasattr(aastore.StorageMode, "PrefixMemory"))
 
-    # 空编码文件在零预算时保持按需模式，正预算时全驻留且不分配序列字节。
     def test_empty_preload_budget(self):
         for label, contents, expected in (("empty", "", []),
                                            ("empty-sequence", ">empty\n", [""])):
@@ -363,7 +350,6 @@ class PythonInterfaceTest(unittest.TestCase):
                     self.assertEqual(list(store.get(list(range(len(expected))))), expected)
                     self.assertEqual(list(store.sequential_get(0, len(expected))), expected)
 
-    # 已删除的策略选项必须报错，不能被静默接受。
     def test_removed_scan_options(self):
         self.assertFalse(hasattr(aastore, "ReadStrategy"))
         for field, value in (("read_strategy", 0), ("scan_max_range_bytes", 0)):
@@ -460,7 +446,6 @@ class PythonInterfaceTest(unittest.TestCase):
                 with self.assertRaises(IndexError):
                     store.sequential_get(4, 3)
 
-    # 检查字段掩码、UTF-8 文本、记录切片及缺失字段的报错。
     def test_records(self):
         with aastore.Store(self.path) as store:
             records = store.batch_get_records([1, 0, 1])
@@ -493,7 +478,6 @@ class PythonInterfaceTest(unittest.TestCase):
                 names.sequence(0)
             self.assertEqual(list(store.batch_get_records([1], aastore.RecordFields.None_)), [{}])
 
-    # 长度查询使用文本索引，返回 UTF-8 字节数并遵守列存在性、ID 和关闭规则。
     def test_text_lengths(self):
         fasta, path = self.root / "text-lengths.fasta", self.root / "text-lengths-store"
         names, descriptions = ["", "na\u00efve", "tail"], ["", "\u63cf\u8ff0 \u00b5", ""]
@@ -545,7 +529,6 @@ class PythonInterfaceTest(unittest.TestCase):
             self.assertEqual(store.name_length(1), len(names[1].encode("utf-8")))
             self.assertEqual(store.description_length(1), len(descriptions[1].encode("utf-8")))
 
-    # 覆盖乱序及重复请求、空序列和空文本；UTF-8 边界以字节而非字符计量。
     def test_layout_views(self):
         fasta = self.root / "layout.fasta"
         path = self.root / "layout-store"
@@ -581,7 +564,6 @@ class PythonInterfaceTest(unittest.TestCase):
                 with self.assertRaises(AttributeError):
                     records.names.stats.requested_bytes = 0
 
-    # 每条序列占 50 packed 字节，按已知文件区间检验零/非零合并预算。
     def test_range_budgets(self):
         fasta = self.root / "range-budget.fasta"
         path = self.root / "range-budget-store"
@@ -592,7 +574,6 @@ class PythonInterfaceTest(unittest.TestCase):
         ), encoding="ascii")
         aastore.build_fasta(fasta, path, write_names=False, write_descriptions=False)
         sparse_ids, adjacent_ids = [0, 0, 2, 4, 6], [0, 0, 1, 2, 3]
-        # 预算只限制合并结果，零取消限额；单条读取本身仍必须完整执行。
         cases = [
             ("sparse-gap-limited", sparse_ids,
              50, 100, 0, 256, (4, 200, 50, 0)),
@@ -609,7 +590,6 @@ class PythonInterfaceTest(unittest.TestCase):
             for label, ids, gap, merged, exact, buffer_bytes, expected in cases:
                 for backend in self.backends:
                     with self.subTest(case=label, backend=backend):
-                        # input_sorted 是调用方承诺，当前实现不会验证非法顺序。
                         options = aastore.ReadOptions(
                             threads=2, io_backend=backend, input_sorted=True,
                             merge_gap_bytes=gap,
@@ -636,7 +616,6 @@ class PythonInterfaceTest(unittest.TestCase):
                         with self.assertRaises(AttributeError):
                             stats.read_bytes = 0
 
-    # 保留临时批次或记录子批次的视图，确认父对象销毁后数据仍有效且不可写。
     def test_view_lifetime(self):
         store = aastore.Store(self.path)
         view = store.get([1]).view(0)
@@ -679,7 +658,6 @@ class PythonInterfaceTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             view[0] = 0
 
-    # 重用带保护字节的缓冲，覆盖直接批读和直接顺读两条路径。
     def test_direct_outputs(self):
         ids = [5, 1, 0, 7, 1]
         for mode in (aastore.StorageMode.NoMemory, aastore.StorageMode.PartialMemory,
@@ -710,7 +688,6 @@ class PythonInterfaceTest(unittest.TestCase):
                 self.assertEqual(store.get_into([], []).requested_sequences, 0)
                 self.assertEqual(store.get_into([0], [None]).requested_residues, 0)
 
-    # 拒绝非法输出，在全部校验完成前不写入任何合法输出区。
     def test_invalid_outputs(self):
         with aastore.Store(self.path) as store:
             valid = bytearray(b"#" * len(self.sequences[1]))
@@ -740,7 +717,6 @@ class PythonInterfaceTest(unittest.TestCase):
             with self.assertRaises(IndexError):
                 store.sequential_get_into(2, 1, [])
 
-    # 从多个 Python 线程共享只读 Store，核对结果不被并发调用覆盖。
     def test_parallel_callers(self):
         with aastore.Store(self.path) as store:
             options = aastore.ReadOptions(threads=2)
@@ -750,14 +726,12 @@ class PythonInterfaceTest(unittest.TestCase):
                 for future in futures:
                     self.assertEqual(list(future.result()), [self.sequences[i] for i in ids])
 
-    # 在缓冲生成器暂停时关闭 Store 并修改选项，已经开始的读取仍使用自己的资源和配置。
     def test_close_during_read(self):
         store = aastore.Store(self.path)
         options = aastore.ReadOptions(threads=1, io_backend=aastore.IoBackend.Pread)
         entered, resume = threading.Event(), threading.Event()
         output = bytearray(len(self.sequences[1]))
 
-        # 在 C++ 已取得库引用后暂停，创建可重复的关闭时序。
         def outputs():
             entered.set()
             if not resume.wait(10):
@@ -784,13 +758,11 @@ class PythonInterfaceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.__enter__()
 
-    # 长解码调用期间其他 Python 线程能执行，证明原生工作没有长期占用 GIL。
     def test_gil_release(self):
         with self.open_store(aastore.StorageMode.FullMemory) as store:
             active, stop = threading.Event(), threading.Event()
             progress = [0]
 
-            # 周期性让出 GIL，避免观察线程阻塞调用线程返回。
             def observe():
                 while not stop.wait(0.001):
                     if active.is_set():

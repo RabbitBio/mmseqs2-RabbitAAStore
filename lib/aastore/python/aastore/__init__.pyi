@@ -1,4 +1,3 @@
-# 文件职责：描述公开 Python 接口的类型，供 IDE 和静态检查器使用。
 from os import PathLike
 from typing import (
     Any, ClassVar, Dict, Iterable, Iterator, List, NoReturn, Optional,

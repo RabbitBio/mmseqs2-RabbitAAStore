@@ -1,5 +1,3 @@
-// 文件职责：验证建库、元数据、随机及顺序读取、直接输出和文本列等公开接口。
-// 覆盖多种驻留模式、线程数、异常输入及批次边界，核对结果内容和输出缓冲边界。
 #include "aastore/store.hpp"
 #include "../src/store_io.hpp"
 #if defined(AASTORE_TEST_IO_URING)
@@ -26,7 +24,6 @@ namespace {
 
 int failures = 0;
 
-// 记录失败断言并输出说明，不中断后续测试。
 void expect(bool condition, const std::string& message) {
     if (condition) return;
     ++failures;
@@ -39,7 +36,6 @@ struct ConcurrentGetContext {
     std::array<bool, 8>* results = nullptr;
 };
 
-// 使用线程独立字符串重复读取序列，并记录是否全部匹配。
 void run_concurrent_get(ConcurrentGetContext* ctx,
                         size_t worker) noexcept {
     try {
@@ -55,7 +51,6 @@ void run_concurrent_get(ConcurrentGetContext* ctx,
     }
 }
 
-// 判断所有线程结果是否均为成功。
 bool all_true(const bool* values, size_t count) {
     for (size_t i = 0; i < count; ++i) {
         if (!values[i]) return false;
@@ -63,7 +58,6 @@ bool all_true(const bool* values, size_t count) {
     return true;
 }
 
-// 在调用线程抛异常，其他线程仍须结束；两种任务接口均保留原异常。
 void check_worker_exception_cleanup() {
     struct Context {
         std::atomic<size_t> completed{0};
@@ -91,7 +85,6 @@ void check_worker_exception_cleanup() {
     }
 }
 
-// 核对诊断标记、关闭时的零值，以及非空读取启用后的阶段计时。
 void check_diagnostic_stats(const aastore::BatchStats& stats, bool enabled) {
     expect(stats.diagnostics_collected == enabled, "read reports its diagnostic setting");
     if (!enabled) {
@@ -125,7 +118,6 @@ void check_diagnostic_stats(const aastore::BatchStats& stats, bool enabled) {
     }
 }
 
-// 比较不依赖运行时调度的基本统计，诊断开关不应改变它们。
 void check_basic_stats(const aastore::BatchStats& left, const aastore::BatchStats& right) {
     using S = aastore::BatchStats;
     static constexpr uint64_t S::* fields[] = {
@@ -140,7 +132,6 @@ void check_basic_stats(const aastore::BatchStats& left, const aastore::BatchStat
     }
 }
 
-// 用已知区间验证串行/并行规划，诊断开关不改变范围及缓冲预算。
 void check_planner_diagnostics() {
     for (size_t copies : {size_t{1}, size_t{14000}}) {
         aastore::SequenceRequests requests;
@@ -173,7 +164,6 @@ void check_planner_diagnostics() {
     }
 }
 
-// 对同一批次开关诊断各读一次，检查内容及基本统计一致，返回未启用诊断的结果。
 aastore::Batch check_batch_diagnostics(const aastore::Store& store,
                                        const std::vector<aastore::SequenceId>& ids,
                                        aastore::ReadOptions options) {
@@ -190,7 +180,6 @@ aastore::Batch check_batch_diagnostics(const aastore::Store& store,
     return plain;
 }
 
-// 使用精确长度的输出区重复读取，检查顺序、重复 ID、空序列和缓冲边界。
 void check_batch_get_into(const aastore::Store& store,
                            const std::vector<std::string>& expected,
                            const std::vector<aastore::SequenceId>& ids,
@@ -229,7 +218,6 @@ void check_batch_get_into(const aastore::Store& store,
     }
 }
 
-// 用逆序排列的独立缓冲读取连续区间，检查两个重载、输出复用和空序列边界。
 void check_sequential_get_into(const aastore::Store& store,
                                 const std::vector<std::string>& expected,
                                 aastore::SequenceId begin,
@@ -286,26 +274,22 @@ void check_sequential_get_into(const aastore::Store& store,
 }
 
 struct TempDir {
-    // 创建带进程 ID 的专用测试目录，清理同名旧测试残留。
     TempDir()
         : path_(std::filesystem::temp_directory_path() /
                 ("aastore_byte_range_test_" + std::to_string(::getpid()))) {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
     }
-    // 尽力删除测试目录，析构时不传播清理错误。
     ~TempDir() {
         std::error_code error;
         std::filesystem::remove_all(path_, error);
     }
-    // 返回测试临时目录路径的只读引用。
     const std::filesystem::path& path() const { return path_; }
 
     std::filesystem::path path_;
 };
 
 #if defined(__linux__)
-// 仅统计测试副本的三份索引映射，并确认其权限为只读。
 size_t index_mapping_count(const std::filesystem::path& path) {
     std::ifstream maps("/proc/self/maps");
     if (!maps) throw std::runtime_error("cannot inspect test process mappings");
@@ -323,7 +307,6 @@ size_t index_mapping_count(const std::filesystem::path& path) {
     return count;
 }
 
-// 统计指向测试副本的描述符，避免依赖进程中其他资源的数量。
 size_t store_descriptor_count(const std::filesystem::path& path) {
     size_t count = 0;
     const std::string prefix = path.string() + '/';
@@ -336,7 +319,6 @@ size_t store_descriptor_count(const std::filesystem::path& path) {
 }
 #endif
 
-// 偶数记录使 AAPCMP3 的块基址不按八字节对齐，仍须正确打开并读取全部边界。
 void check_even_record_metadata(const std::filesystem::path& root) {
     const auto fasta = root / "even_records.fa";
     const auto path = root / "even_records_store";
@@ -358,7 +340,6 @@ void check_even_record_metadata(const std::filesystem::path& root) {
     }
 }
 
-// 让多个线程切入同一条长序列，并覆盖重复边界、前缀命中和跨调用暂存区复用。
 void check_sequential_into_partitions(const std::filesystem::path& root,
                                       bool concurrent) {
     const auto fasta = root / (concurrent ? "sequential_concurrency.fa"
@@ -419,7 +400,6 @@ void check_sequential_into_partitions(const std::filesystem::path& root,
 }
 
 #if defined(AASTORE_TEST_IO_URING)
-// 真实创建 ring 并读取小文件；只有初始化不可用可跳过，I/O 和回调错误继续失败。
 bool probe_io_uring() {
     std::unique_ptr<std::FILE, decltype(&std::fclose)> file(
         std::tmpfile(), &std::fclose);
@@ -458,7 +438,6 @@ bool probe_io_uring() {
     return true;
 }
 
-// 混合前缀命中与磁盘请求，验证小队列下的协作解码、长序列、重复 ID 和输出顺序。
 void check_prefix_slices(const std::filesystem::path& root) {
     const auto fasta = root / "prefix_slices.fa";
     const auto path = root / "prefix_slices_store";
@@ -503,7 +482,6 @@ void check_prefix_slices(const std::filesystem::path& root) {
 constexpr size_t kLongTestResidues = 6553;
 constexpr uint64_t kPrefixCacheBytes = 4096;
 
-// 每次运行创建独立建库夹具，各组无需依赖其他测试先执行。
 struct StoreFixture {
     StoreFixture() {
         fasta = temp.path() / "proteins.fa";
@@ -557,7 +535,6 @@ struct StoreFixture {
     std::vector<std::string> expected_descriptions;
 };
 
-// 驻留选项供相关组各自打开 Store，不共享运行时状态。
 aastore::StoreOptions full_store_options() {
     aastore::StoreOptions options;
     options.preload_bytes = std::numeric_limits<uint64_t>::max();
@@ -572,7 +549,6 @@ aastore::StoreOptions prefix_store_options() {
     return options;
 }
 
-// 移动转移全部索引所有权，Read 快照不再依赖原索引内容，失败打开释放部分资源。
 void StoreFixture::check_index_lifetimes() {
     const auto target_path = temp.path() / "index_move_target";
     std::filesystem::copy(store_path, target_path, std::filesystem::copy_options::recursive);
@@ -602,7 +578,6 @@ void StoreFixture::check_index_lifetimes() {
                    "move assignment releases the destination store resources");
 #endif
             if (mode == aastore::IndexLoadMode::Read) {
-                // 等长原地覆盖，不截断文件；即使错误实现仍使用映射也不会触发 SIGBUS。
                 for (const char* filename : {"meta.bin", "names.meta", "descriptions.meta"}) {
                     const auto metadata_path = path / filename;
                     const std::string replacement(
@@ -660,7 +635,6 @@ void StoreFixture::check_index_lifetimes() {
     }
 }
 
-// 建库格式、可选文本列、覆盖和空输入。
 void StoreFixture::check_builder() {
     check_even_record_metadata(temp.path());
     check_index_lifetimes();
@@ -843,7 +817,6 @@ void StoreFixture::check_builder() {
 
 }
 
-// 随机读取、批次布局、规划、驻留模式及直接输出校验。
 void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
     aastore::ByteArena moved_from_arena;
     moved_from_arena.resize_uninitialized(1024);
@@ -1021,7 +994,6 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
     }
 #endif
 
-    // 对齐后 p0 与 p1 的起始位置相差一个 4 KiB packed 页。
     aastore::ReadOptions sparse_options;
     sparse_options.collect_diagnostics = true;
     const aastore::Batch merged = store.get({1, 3}, sparse_options);
@@ -1039,7 +1011,6 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
     expect(capped.stats.ranges == 2,
            "maximum range prevents an oversized chained merge");
 
-    // p2 再向后一个 packed 页，与 p0 的间隔超过 4 KiB。
     const aastore::Batch separate =
         store.get({1, 5}, sparse_options);
     expect(separate.stats.ranges == 2, "gap above 4 KiB stays separate");
@@ -1223,7 +1194,6 @@ void StoreFixture::check_random([[maybe_unused]] bool io_uring_available) {
 
 }
 
-// 连续区间、散布输出、长序列分区和驻留边界。
 void StoreFixture::check_sequential() {
     check_sequential_into_partitions(temp.path(), false);
     aastore::Store store(store_path);
@@ -1336,7 +1306,6 @@ void StoreFixture::check_sequential() {
 
 }
 
-// 用各线程独立批次覆盖单 ID 请求、空描述及共享文件描述符的并发读取。
 void check_text_record_reads(const aastore::Store& store,
                             const std::vector<std::string>& names,
                             const std::vector<std::string>& descriptions) {
@@ -1380,7 +1349,6 @@ void check_text_record_reads(const aastore::Store& store,
     }
 }
 
-// 覆盖紧凑文本索引的块末尾、下一块及最后一条记录。
 void check_text_record_boundaries(const std::filesystem::path& root) {
     const auto input_path = root / "text_record_boundaries.fa";
     const auto store_path = root / "text_record_boundaries";
@@ -1416,12 +1384,11 @@ void check_text_record_boundaries(const std::filesystem::path& root) {
     }
 }
 
-// 文本长度按字节计数，仅查询索引，并区分缺失列与存在的空字段。
 void check_text_length_queries(const std::filesystem::path& root) {
     const auto fasta = root / "text_lengths.fa";
     const auto source = root / "text_lengths_source";
-    const std::vector<std::string> names{u8"序列", "plain", ""};
-    const std::vector<std::string> descriptions{u8"描述é", "", ""};
+    const std::vector<std::string> names{u8"caf\u00e9", "plain", ""};
+    const std::vector<std::string> descriptions{u8"r\u00e9sum\u00e9\u2014notes", "", ""};
     {
         std::ofstream output(fasta);
         output << '>' << names[0] << ' ' << descriptions[0] << "\nAC\n"
@@ -1446,7 +1413,7 @@ void check_text_length_queries(const std::filesystem::path& root) {
                            store.description_length(id) == records.description_view(id).size(),
                        "text lengths match UTF-8 byte counts and zero-length fields");
             }
-            expect(store.name_length(0) == 6 && store.description_length(0) == 8,
+            expect(store.name_length(0) == 5 && store.description_length(0) == 16,
                    "text lengths count UTF-8 bytes rather than Unicode characters");
             for (const auto id : {store.size(), UINT64_MAX}) {
                 for (const bool name : {false, true}) {
@@ -1458,7 +1425,6 @@ void check_text_length_queries(const std::filesystem::path& root) {
                 }
             }
 
-            // 只截断本测试副本的正文，不动索引；长度查询不能依赖正文读取。
             if (!resident) {
                 std::filesystem::resize_file(path / "names.bin", 0);
                 std::filesystem::resize_file(path / "descriptions.bin", 0);
@@ -1503,7 +1469,6 @@ void check_text_length_queries(const std::filesystem::path& root) {
     }
 }
 
-// 记录字段选择、文本列统计及未请求字段的访问错误。
 void StoreFixture::check_text() {
     check_text_record_boundaries(temp.path());
     check_text_length_queries(temp.path());
@@ -1633,7 +1598,6 @@ void StoreFixture::check_text() {
             }
         }
 
-        // 等长覆盖测试副本，区分自有缓冲与仍依赖源文件的只读映射。
         for (const char* filename : {"names.bin", "descriptions.bin"}) {
             const auto data_path = path / filename;
             const std::string replacement(
@@ -1710,7 +1674,6 @@ void StoreFixture::check_text() {
     }
 }
 
-// 跨调用并发、总线程预算、并行直接输出和异常清理。
 void StoreFixture::check_concurrency([[maybe_unused]] bool io_uring_available) {
     check_worker_exception_cleanup();
     check_sequential_into_partitions(temp.path(), true);
@@ -1779,7 +1742,6 @@ void StoreFixture::check_concurrency([[maybe_unused]] bool io_uring_available) {
 
 }  // namespace
 
-// 不带参数保留完整套件；CTest 按组运行，允许单独重现某一类失败。
 int main(int argc, char* argv[]) {
     const std::array<std::string_view, 5> groups{
         "builder", "random", "sequential", "text", "concurrency"};

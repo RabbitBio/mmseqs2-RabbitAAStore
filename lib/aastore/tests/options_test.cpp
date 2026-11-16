@@ -1,4 +1,3 @@
-// 文件职责：验证公开配置校验、零值约定，以及无效配置在读写前被拒绝。
 #include "aastore/store.hpp"
 
 #include <cstdlib>
@@ -33,7 +32,6 @@ void expect_invalid(Function&& function, const std::string& message) {
     }
 }
 
-// 每次测试拥有独立目录，测试结束时清理已创建的文件。
 struct Fixture {
     std::filesystem::path root;
     std::filesystem::path fasta;
@@ -63,7 +61,6 @@ struct Fixture {
     }
 };
 
-// 默认配置和文档中的零值都是有效约定，不应被新增校验拒绝。
 void check_valid_options(const Fixture& fixture) {
     aastore::BuildOptions{}.validate();
     aastore::StoreOptions{}.validate();
@@ -116,7 +113,6 @@ void check_valid_options(const Fixture& fixture) {
     }
 }
 
-// 无效建库配置先于输入检查被拒绝，且不会创建或覆盖数据库。
 void check_invalid_build(const Fixture& fixture) {
     aastore::BuildOptions options;
     options.threads = 0;
@@ -135,7 +131,6 @@ void check_invalid_build(const Fixture& fixture) {
            "invalid overwrite preserves the existing store");
 }
 
-// 无效索引加载方式即使路径不存在也必须报配置错误。
 void check_invalid_store(const Fixture& fixture) {
     for (const auto mode : {static_cast<aastore::IndexLoadMode>(99),
                            static_cast<aastore::IndexLoadMode>(255)}) {
@@ -149,7 +144,6 @@ void check_invalid_store(const Fixture& fixture) {
     }
 }
 
-// 预算只限制编码序列预载；全量边界必须进入无需文件读取的快速路径。
 void check_preload_budget(const Fixture& fixture) {
     const uint64_t packed = aastore::Store(fixture.path).packed_bytes();
     struct Case {
@@ -192,7 +186,6 @@ void check_preload_budget(const Fixture& fixture) {
         }
     }
 
-    // 空库和仅含空序列的库无需分配 packed 缓冲，正预算也不能产生部分驻留。
     for (const bool empty_records : {false, true}) {
         const auto fasta = fixture.root / (empty_records ? "empty-records.fa" : "empty.fa");
         const auto path = fixture.root / (empty_records ? "empty-records" : "empty");
@@ -224,7 +217,6 @@ void check_preload_budget(const Fixture& fixture) {
     }
 }
 
-// 每个读取入口在空请求、驻留数据与调用方输出区上都遵守同一校验规则。
 void check_invalid_reads(const Fixture& fixture) {
     for (const uint64_t budget : {uint64_t{0}, uint64_t{1},
                                   std::numeric_limits<uint64_t>::max()}) {

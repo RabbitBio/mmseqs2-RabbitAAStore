@@ -1,4 +1,3 @@
-# 文件职责：检查当前构建的 Python 扩展能导入，并完成小规模建库与读取。
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,7 +6,6 @@ import aastore
 
 
 class EnvironmentSmokeTest(unittest.TestCase):
-    # 使用临时输入核对批次、调用方缓冲及常驻名称，退出时自动清理。
     def test_roundtrip(self):
         with tempfile.TemporaryDirectory(prefix="aastore-python-smoke-") as temporary:
             root = Path(temporary)

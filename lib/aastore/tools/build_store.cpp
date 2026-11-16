@@ -1,5 +1,3 @@
-// 文件职责：提供 FASTA 转 RabbitAAStore 数据库的命令行入口。
-// 解析路径、线程和文本列开关，调用通用建库接口并报告耗时与输出规模。
 #include "aastore/store.hpp"
 
 #include <chrono>
@@ -21,7 +19,6 @@ struct Arguments {
     size_t threads = 1;
 };
 
-// 输出建库工具的命令行用法和可选参数。
 void print_usage(std::ostream& output) {
     output << "usage: aastore_build FASTA STORE [OPTIONS]\n"
               "  --overwrite         replace an existing store\n"
@@ -31,7 +28,6 @@ void print_usage(std::ostream& output) {
               "  --threads N         total build threads, including parser (default: 1)\n";
 }
 
-// 解析非零整数并校验可用 size_t 表示，否则报告对应参数错误。
 size_t parse_positive_size(const std::string& value,
                            const std::string& option) {
     size_t consumed = 0;
@@ -44,7 +40,6 @@ size_t parse_positive_size(const std::string& value,
     return static_cast<size_t>(parsed);
 }
 
-// 解析 FASTA、输出目录和建库选项，拒绝缺失或未知参数。
 Arguments parse_arguments(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--help") {
         print_usage(std::cout);
@@ -84,7 +79,6 @@ Arguments parse_arguments(int argc, char** argv) {
 
 }  // namespace
 
-// 执行 FASTA 建库并输出规模和耗时统计，失败时返回非零退出码。
 int main(int argc, char** argv) {
     try {
         const Arguments arguments = parse_arguments(argc, argv);

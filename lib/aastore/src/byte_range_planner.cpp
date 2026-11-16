@@ -1,5 +1,3 @@
-// 文件职责：对序列请求排序，计算 5 位编码物理范围并按间隙和大小限制合并。
-// 在减少请求数量和限制额外读取之间按参数取舍，同时汇总范围与字节统计。
 #include "byte_range_planner.hpp"
 
 #include "aastore/store.hpp"
@@ -14,12 +12,10 @@
 namespace aastore {
 namespace {
 
-// 计算残基区间的 5 位编码字节数，末尾不足一字节时向上取整。
 uint64_t packed_bytes_for_residues(uint64_t residues) {
     return (residues * 5 + 7) / 8;
 }
 
-// 执行饱和加法，溢出时返回 uint64_t 的最大值。
 uint64_t saturating_add(uint64_t left, uint64_t right) {
     if (right > std::numeric_limits<uint64_t>::max() - left) {
         return std::numeric_limits<uint64_t>::max();
@@ -27,7 +23,6 @@ uint64_t saturating_add(uint64_t left, uint64_t right) {
     return left + right;
 }
 
-// 执行至少一个索引任务，调用线程负责第零个任务并等待其余线程。
 template <typename Function>
 void run_parallel(size_t worker_count, Function function) {
     std::vector<std::thread> workers;
@@ -40,7 +35,6 @@ void run_parallel(size_t worker_count, Function function) {
     join_guard.join_all();
 }
 
-// 将带上下文的函数指针适配到索引并行执行器，由调用线程参与执行。
 template <typename Context>
 void run_parallel(size_t worker_count,
                   void (*function)(Context*, size_t),
@@ -50,7 +44,6 @@ void run_parallel(size_t worker_count,
     });
 }
 
-// 重新汇总读计划的总字节数和最大单范围大小。
 void summarize_ranges(ReadPlan& plan) {
     plan.read_bytes = 0;
     plan.max_range_bytes = 0;
@@ -61,7 +54,6 @@ void summarize_ranges(ReadPlan& plan) {
     }
 }
 
-// 顺序遍历按物理位置有序的请求，生成受间隙和大小限制的稀疏范围。
 ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
                                    const ReadOptions& options) {
     ReadPlan plan;
@@ -120,11 +112,8 @@ ReadPlan plan_sparse_ranges_serial(const SequenceRequests& requests,
     return plan;
 }
 
-// 并行规划时紧凑保存非空请求的 packed 区间，原请求下标由旁边的数组关联。
 struct PlannerExtent {
-    // 该请求在 packed.bin 中的起始字节偏移。
     uint64_t begin;
-    // 结束字节偏移，不含此位置。
     uint64_t end;
 };
 
@@ -133,7 +122,6 @@ using PlannerExtents =
 using RequestIndices =
     std::vector<size_t, NoInitAllocator<size_t>>;
 
-// 并行计算请求范围和覆盖统计，再顺序合并为稀疏读计划。
 ReadPlan plan_sparse_ranges_parallel(const SequenceRequests& requests,
                                      const ReadOptions& options,
                                      size_t worker_count) {
@@ -259,11 +247,8 @@ constexpr unsigned kRadixBits = 11;
 constexpr size_t kRadix = size_t{1} << kRadixBits;
 constexpr uint32_t kRadixMask = static_cast<uint32_t>(kRadix - 1);
 
-// 基数排序使用的 8 字节轻量键，避免每轮都搬运完整 SequenceRequest。
 struct CompactKey {
-    // 可用 32 位表示的序列 ID，作为排序键。
     uint32_t sequence_id;
-    // 完整请求在排序前 requests 数组中的下标，最后一轮用来恢复请求。
     uint32_t request_index;
 };
 
@@ -271,39 +256,25 @@ static_assert(sizeof(CompactKey) == 8);
 
 using RadixCounts = std::vector<std::array<size_t, kRadix>>;
 
-// 一轮并行基数排序借用的输入、输出和桶数组；线程各自更新对应的桶行。
 struct RadixContext {
-    // 完整请求数组；紧凑键路径保持原顺序，普通路径每轮交换输入输出。
     SequenceRequests* requests = nullptr;
-    // 普通路径本轮写入的请求暂存区，下一轮与 requests 交换。
     SequenceRequests* scratch = nullptr;
-    // 紧凑键路径最后一轮还原完整请求的目标数组。
     SequenceRequests* sorted_requests = nullptr;
-    // 紧凑键路径本轮读取的排序键数组。
     std::vector<CompactKey>* keys = nullptr;
-    // 紧凑键路径下一轮的排序键输出数组。
     std::vector<CompactKey>* scratch_keys = nullptr;
-    // [线程][桶] 计数，记录各线程输入分片落入每个桶的项数。
     RadixCounts* counts = nullptr;
-    // [线程][桶] 输出位置；前缀和初始化后，各线程递增自己的行。
     RadixCounts* positions = nullptr;
-    // 本轮分片线程数，用于按请求数量划分输入。
     size_t thread_count = 1;
-    // 本轮使用的 ID 位段起点，右移后再取 kRadixBits 位作为桶号。
     unsigned shift = 0;
-    // 是否只排序 CompactKey；false 时直接搬运完整请求。
     bool compact = false;
-    // 是否为紧凑键路径的最后一轮，此轮直接输出完整请求。
     bool final_pass = false;
 };
 
-// 按序列 ID 比较请求，供比较排序回退路径使用。
 bool sequence_request_less(const SequenceRequest& left,
                            const SequenceRequest& right) {
     return left.sequence_id < right.sequence_id;
 }
 
-// 统计当前基数位段在每个线程分片中的桶计数。
 void count_radix_buckets(RadixContext* ctx, size_t worker) {
     std::array<size_t, kRadix>& local = (*ctx->counts)[worker];
     local.fill(0);
@@ -319,7 +290,6 @@ void count_radix_buckets(RadixContext* ctx, size_t worker) {
     }
 }
 
-// 由桶计数计算各线程的互不重叠输出起点。
 void compute_radix_positions(RadixContext* ctx) {
     size_t sum = 0;
     for (size_t bucket = 0; bucket < kRadix; ++bucket) {
@@ -332,7 +302,6 @@ void compute_radix_positions(RadixContext* ctx) {
     }
 }
 
-// 把请求转换为由 32 位序列 ID 和原请求索引组成的紧凑排序键。
 void initialize_compact_keys(RadixContext* ctx, size_t worker) {
     const size_t begin =
         ctx->requests->size() * worker / ctx->thread_count;
@@ -345,7 +314,6 @@ void initialize_compact_keys(RadixContext* ctx, size_t worker) {
     }
 }
 
-// 按桶位置散布紧凑键，最后一轮直接恢复完整请求。
 void scatter_compact_keys(RadixContext* ctx, size_t worker) {
     std::array<size_t, kRadix>& local = (*ctx->positions)[worker];
     const size_t begin =
@@ -366,7 +334,6 @@ void scatter_compact_keys(RadixContext* ctx, size_t worker) {
     }
 }
 
-// 按当前基数位段将完整请求散布到临时数组。
 void scatter_sequence_requests(RadixContext* ctx, size_t worker) {
     std::array<size_t, kRadix>& local = (*ctx->positions)[worker];
     const size_t begin =
@@ -384,7 +351,6 @@ void scatter_sequence_requests(RadixContext* ctx, size_t worker) {
 
 }  // namespace
 
-// 计算连续 5 位编码中请求所需的物理字节范围。
 PackedByteExtent packed_byte_extent(const SequenceRequest& request) {
     if (request.length == 0) return {};
     const uint64_t aligned_start = request.start & ~uint64_t{7};
@@ -393,7 +359,6 @@ PackedByteExtent packed_byte_extent(const SequenceRequest& request) {
             packed_bytes_for_residues(end_residue)};
 }
 
-// 按序列 ID 排序，符合规模和 ID 范围条件时使用并行基数排序。
 void sort_requests_by_sequence_id(SequenceRequests& requests,
                                   size_t thread_count,
                                   uint64_t sequence_count) {
@@ -450,7 +415,6 @@ void sort_requests_by_sequence_id(SequenceRequests& requests,
     }
 }
 
-// 为已按序列 ID 排序的请求生成稀疏读计划，并汇总读取范围。
 ReadPlan plan_byte_ranges(const SequenceRequests& requests,
                           const ReadOptions& options) {
     const size_t worker_count = requests.size() >= 65536

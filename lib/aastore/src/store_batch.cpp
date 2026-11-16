@@ -1,5 +1,3 @@
-// 文件职责：实现随机批量读取的布局、排序、重复请求合并、前缀分流与结果回填。
-// 调度 FullMemory、pread 或 io_uring 路径；后者将有限前缀解码与 CQ 处理交错执行。
 #include "store_io.hpp"
 
 #include "byte_range_planner.hpp"
@@ -19,53 +17,33 @@
 namespace aastore {
 namespace {
 
-// PartialMemory 中命中同一条序列的一组有序请求，解码一次后复制给重复请求。
 struct CacheHitGroup {
-    // 完整有序请求数组中该组的起始下标。
     size_t request_begin = 0;
-    // 该组末尾的下一下标，不是序列 ID。
     size_t request_end = 0;
 };
 
-// PartialMemory 中同一条未命中序列的请求组，关联一条去重后的磁盘请求。
 struct CacheMissGroup {
-    // 完整有序请求数组中该组的起始下标。
     size_t request_begin = 0;
-    // 完整有序请求数组中该组末尾的下一下标。
     size_t request_end = 0;
-    // 该组首个请求在 misses 数组中的下标，供读完后复制重复结果。
     size_t miss_index = 0;
 };
 
-// 前缀命中解码阶段的线程与耗时统计；时间均为纳秒。
 struct CacheHitDecodeStats {
-    // 按可用线程数与命中组数取小值得到的工作线程数。
     uint64_t workers = 0;
-    // 独立执行整个前缀解码阶段的墙钟耗时；io_uring 交错路径不单独记录它。
     uint64_t wall_ns = 0;
-    // 各线程实际执行前缀解码及重复结果复制的耗时之和。
     uint64_t total_ns = 0;
-    // 各线程累计前缀处理耗时中的最大值，不是整个阶段的墙钟耗时。
     uint64_t max_busy_ns = 0;
 };
 
-// 批量解码共享只读状态。线程只修改各自的统计槽和输出区。
 struct BatchDecodeContext {
-    // 借用 Store 中从文件偏移零开始的常驻 packed 前缀。
     const uint8_t* prefix_packed = nullptr;
-    // 常驻前缀的有效字节数，用于校验解码区间。
     uint64_t prefix_packed_bytes = 0;
-    // 完整请求列表，布局完成后 output_position 已是输出地址或字节偏移。
     SequenceRequests* requests = nullptr;
-    // 交给磁盘范围规划的请求列表，前缀模式下仅含去重后的未命中请求。
     const SequenceRequests* read_requests = nullptr;
-    // 借用本次结果对象；线程写各自输出位置，统计按阶段汇总。
     Batch* batch = nullptr;
-    // true 时 output_position 是调用方地址；false 时是 batch->storage 内偏移。
     bool direct_output = false;
 };
 
-// 返回调用方输出地址或请求在批次连续输出区中的写入地址。
 char* batch_request_output(const BatchDecodeContext* ctx,
                            const SequenceRequest& request) {
     if (ctx->direct_output) {
@@ -74,24 +52,15 @@ char* batch_request_output(const BatchDecodeContext* ctx,
     return ctx->batch->storage.data() + request.output_position;
 }
 
-// 前缀解码任务的共享状态，线程通过原子下标领取组，不另建常驻解码线程池。
 struct CacheHitDecodeContext {
-    // 借用输出布局、请求和前缀数据视图。
     BatchDecodeContext* decode = nullptr;
-    // 本批前缀命中组列表，执行期间不修改其内容。
     std::vector<CacheHitGroup>* groups = nullptr;
-    // 独立解码前缀时允许使用的最大线程数。
     size_t maximum_workers = 1;
-    // 本次前缀阶段的汇总统计，在线程完成后发布到 BatchStats。
     CacheHitDecodeStats stats;
-    // 下一待领取的命中组下标，所有线程用 fetch_add 取得不重复的任务。
     std::atomic<size_t> next_group{0};
-    // 逐线程累计的前缀处理纳秒数，诊断关闭时为空。
     std::vector<uint64_t> decode_ns;
 };
 
-// 动态领取前缀命中组，解码并复制重复结果，达到字节或组数预算后让出执行权。
-// 单组不拆分；确认没有更多组可领取时返回 false，否则保留后续调用机会。
 bool decode_cache_hit_slice(void* opaque, size_t worker,
                             uint64_t byte_budget, size_t group_budget) {
     auto* ctx = static_cast<CacheHitDecodeContext*>(opaque);
@@ -123,7 +92,6 @@ bool decode_cache_hit_slice(void* opaque, size_t worker,
                     (ctx->decode->direct_output ? 0 : 1));
         }
         const uint64_t references = group.request_end - group.request_begin;
-        // 输出布局已校验包含重复请求的总大小，此处累计本组实际输出字节。
         const uint64_t output_bytes =
             (first.length + (ctx->decode->direct_output ? 0 : 1)) * references;
         byte_budget -= std::min(byte_budget, output_bytes);
@@ -132,19 +100,16 @@ bool decode_cache_hit_slice(void* opaque, size_t worker,
     return more;
 }
 
-// 不限制单轮工作量，持续领取前缀命中组，供全命中和 pread 前缀阶段使用。
 void decode_cache_hit_worker(void* opaque, size_t worker) {
     decode_cache_hit_slice(opaque, worker,
                           std::numeric_limits<uint64_t>::max(),
                           std::numeric_limits<size_t>::max());
 }
 
-// 供 ring 所属线程处理约 256 KiB 输出或 256 个命中组，再返回 I/O 循环检查 CQ。
 bool decode_cache_hit_work(void* opaque, size_t worker) {
     return decode_cache_hit_slice(opaque, worker, 256 * 1024, 256);
 }
 
-// 重置命中组领取位置，并按工作线程数量初始化解码计时槽位。
 void prepare_cache_hit_decode(CacheHitDecodeContext* ctx, size_t workers) {
     ctx->next_group.store(0, std::memory_order_relaxed);
     ctx->decode_ns.assign(
@@ -153,7 +118,6 @@ void prepare_cache_hit_decode(CacheHitDecodeContext* ctx, size_t workers) {
     ctx->stats.workers = std::min(workers, ctx->groups->size());
 }
 
-// 汇总各线程的前缀解码耗时，记录累计工作量与最忙线程耗时。
 void finish_cache_hit_decode(CacheHitDecodeContext* ctx) {
     for (uint64_t value : ctx->decode_ns) {
         ctx->stats.total_ns += value;
@@ -161,7 +125,6 @@ void finish_cache_hit_decode(CacheHitDecodeContext* ctx) {
     }
 }
 
-// 按命中组数量选择线程数并完成全部缓存命中解码。
 void decode_cache_hits(CacheHitDecodeContext* ctx) {
     if (ctx->groups->empty()) return;
     const size_t worker_count =
@@ -182,7 +145,6 @@ void decode_cache_hits(CacheHitDecodeContext* ctx) {
     finish_cache_hit_decode(ctx);
 }
 
-// 把缓存命中阶段的并行耗时与工作线程数发布到批次统计。
 void publish_cache_hit_decode(BatchStats* target,
                               const CacheHitDecodeStats& source,
                               bool publish_wall) {
@@ -195,7 +157,6 @@ void publish_cache_hit_decode(BatchStats* target,
         std::max(target->worker_max_busy_ns, source.max_busy_ns);
 }
 
-// 并行散播缓存未命中组中已经解码完成的首份结果。
 void scatter_cache_misses(BatchDecodeContext* decode,
                           const std::vector<CacheMissGroup>& groups,
                           const SequenceRequests& misses,
@@ -231,17 +192,12 @@ void scatter_cache_misses(BatchDecodeContext* decode,
     rethrow_worker_errors(errors);
 }
 
-// io_uring 范围完成回调借用的解码状态，将已读范围映射回其中的序列请求。
 struct UringDecodeContext {
-    // 输出位置和请求列表，由本次 batch 调用持有。
     BatchDecodeContext* decode = nullptr;
-    // 完成事件中的 range_index 所对应的有序读取计划。
     const ReadPlan* plan = nullptr;
-    // 借用的逐线程解码耗时数组，诊断开启时由各 ring 所属线程写自己的项。
     std::vector<uint64_t>* decode_ns = nullptr;
 };
 
-// 在 io_uring 范围完成时解码该范围内请求。
 void decode_uring_range(void* opaque, size_t worker, size_t range_index,
                         const uint8_t* packed, uint64_t range_bytes) {
     UringDecodeContext* ctx = static_cast<UringDecodeContext*>(opaque);
@@ -262,25 +218,17 @@ void decode_uring_range(void* opaque, size_t worker, size_t range_index,
     if (diagnostics) (*ctx->decode_ns)[worker] += decode_timer.elapsed_ns();
 }
 
-// 一个 pread 工作线程的阶段耗时，结束后统一汇总，单位纳秒。
 struct PreadWorkerStats {
-    // 本线程在定位读取函数中花费的累计时间。
     uint64_t read_ns = 0;
-    // 本线程解码已读范围的累计时间，包含其协调的并行解码等待。
     uint64_t decode_ns = 0;
 };
 
-// 随机批读的布局准备结果，连接输入 ID、输出空间和后续调度。
 struct BatchLayoutState {
-    // 本批请求及输出定位信息；非 FullMemory 路径按序列 ID 排序。
     SequenceRequests requests;
-    // 总输出字节数；返回 Batch 时每条序列计入一个 NUL，直接输出时不计。
     uint64_t arena_bytes = 0;
-    // 将 options.threads 的零值归一化后的线程预算，不一定全部启动。
     size_t threads = 1;
 };
 
-// 生成批次请求、排序物理顺序并建立连续输出布局。
 void prepare_batch_layout(const Metadata* metadata,
                           uint64_t sequence_count,
                           StorageMode storage_mode,
@@ -431,19 +379,13 @@ void prepare_batch_layout(const Metadata* metadata,
         state->arena_bytes - static_cast<uint64_t>(ids->size());
 }
 
-// 固定前缀命中组与需要从文件读取的请求。
 struct BatchCacheWork {
-    // 前缀未命中的去重请求，每个重复 ID 只保留首个请求供读取和解码。
     SequenceRequests misses;
-    // 可直接从常驻前缀解码的请求组。
     std::vector<CacheHitGroup> hits;
-    // 未命中重复组与 misses 的对应关系，读完后用于回填其他输出位置。
     std::vector<CacheMissGroup> miss_groups;
-    // 实际交给范围规划的请求；前缀模式指向 misses，否则借用完整请求数组。
     const SequenceRequests* read_requests = nullptr;
 };
 
-// 按固定前缀边界把请求划分为命中组和读取组。
 void prepare_batch_cache(StorageMode storage_mode,
                          uint64_t prefix_packed_bytes,
                          SequenceRequests* requests,
@@ -492,7 +434,6 @@ void prepare_batch_cache(StorageMode storage_mode,
     work->read_requests = &work->misses;
 }
 
-// 把字节范围规划结果复制到面向调用方的批次统计中。
 void publish_read_plan(BatchStats* stats,
                        const ReadPlan* plan,
                        StorageMode storage_mode) {
@@ -510,7 +451,6 @@ void publish_read_plan(BatchStats* stats,
     }
 }
 
-// 尝试使用 io_uring 执行批次读取，自动模式不可用时返回 false。
 bool execute_uring_batch(int packed_descriptor,
                          const ReadOptions* options,
                          size_t threads,
@@ -578,7 +518,6 @@ bool execute_uring_batch(int packed_descriptor,
     return true;
 }
 
-// 使用同步 pread 工作线程执行规划后的全部物理范围。
 void execute_pread_batch(int packed_descriptor,
                          size_t threads,
                          const ReadPlan* plan,
@@ -696,7 +635,6 @@ void execute_pread_batch(int packed_descriptor,
     scatter_cache_misses(decode, *miss_groups, *misses, threads);
 }
 
-// 按请求数量划分常驻数据解码任务，直接写入结果位置而不排序或规划磁盘读取。
 void decode_full_memory(const StoreReadContext& store,
                         const SequenceRequests& requests,
                         size_t thread_count,
@@ -744,7 +682,6 @@ void decode_full_memory(const StoreReadContext& store,
 
 }  // namespace
 
-// 组织一次随机批读，依次准备布局、筛出前缀命中、规划未命中范围并执行后端。
 void fill_batch_from_store(const StoreReadContext& store,
                            const std::vector<SequenceId>& ids,
                            const ReadOptions& options,

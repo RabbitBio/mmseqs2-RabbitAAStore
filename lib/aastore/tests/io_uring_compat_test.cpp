@@ -1,5 +1,3 @@
-// 文件职责：独立于宿主内核验证 READ、READV 和能力缺失的兼容路径。
-// 替身在完成阶段才读取 iovec，覆盖旧内核的生命周期和短读要求。
 #include "../src/io_uring_backend.hpp"
 #include "aastore/builder.hpp"
 #include "aastore/store.hpp"
@@ -52,7 +50,6 @@ void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-// 每次场景使用新线程，避免不同模拟内核共享线程本地 ring。
 template <typename Function>
 void run_case(const char* name, Configuration options, Function function) {
     configuration = options;
@@ -105,7 +102,6 @@ void complete_range(void* opaque, size_t worker, size_t index,
     if (context.throw_callback) throw std::logic_error("callback sentinel");
 }
 
-// 提交与完成之间使用栈空间，防止栈上临时 iovec 偶然保持旧值。
 bool clobber_stack(void*, size_t) {
     volatile unsigned char scratch[4096];
     for (size_t index = 0; index < sizeof(scratch); ++index)
@@ -216,7 +212,6 @@ void check_public_store(bool available) {
     }
 }
 
-// 完成阶段才访问请求地址，模拟没有 SUBMIT_STABLE 的旧内核。
 int produce_completion(io_uring* ring, io_uring_cqe** completion) {
     auto& state = *ring->state;
     if (state.completed.empty()) {

@@ -1,5 +1,3 @@
-// 文件职责：读取名称或描述列，校验文本索引并按请求合并范围、复制结果。
-// 支持自有内存中的常驻数据以及 pread、io_uring 读取，文本结果无需经过序列编解码器。
 #include "text_column.hpp"
 #include "index_data.hpp"
 
@@ -24,14 +22,12 @@ namespace {
 
 constexpr uint64_t kTextHeaderBytes = 8 + 6 * sizeof(uint64_t);
 
-// 从输入流读取一个定长文本元数据字段，返回是否成功。
 template <typename T>
 bool read_value(std::istream& input, T& value) {
     input.read(reinterpret_cast<char*>(&value), sizeof(value));
     return static_cast<bool>(input);
 }
 
-// 按文件偏移完整读取文本字节，重试信号中断并检查短读。
 void pread_exact(int descriptor, void* output, uint64_t bytes,
                  uint64_t offset) {
     char* destination = static_cast<char*>(output);
@@ -54,35 +50,22 @@ void pread_exact(int descriptor, void* output, uint64_t bytes,
     }
 }
 
-// 一条名称或描述读取请求，同时记录源文件字节范围与结果中的输出位置。
 struct TextRequest {
-    // 文本记录 ID，与对应序列 ID 一致，用作排序键。
     SequenceId id = 0;
-    // 保留的原输入下标；当前复制路径直接使用 output_offset 定位输出。
     size_t original_index = 0;
-    // 文本数据文件中该记录的起始字节偏移。
     uint64_t begin = 0;
-    // 文本结束字节偏移，不含此位置；等于 begin 时为空文本。
     uint64_t end = 0;
-    // 该记录在 TextBatch::storage 中的字节偏移，排序后保持不变。
     uint64_t output_offset = 0;
 };
 
-// 单列文本的有序读取计划，复用 ByteRange，但源数据是不压缩的文本字节。
 struct TextPlan {
-    // 合并后的文件区间及其覆盖的有序文本请求下标。
     std::vector<ByteRange> ranges;
-    // 诊断开启时统计请求文件区间并集的字节数，不重复统计相同记录。
     uint64_t unique_bytes = 0;
-    // 所有合并范围的字节总数，包含跨过的未请求文本。
     uint64_t read_bytes = 0;
-    // 诊断开启时统计合并跨越文件间隙的次数。
     uint64_t merged_gaps = 0;
-    // 最大单范围字节数，用于约束 io_uring 缓冲预算下的深度。
     uint64_t max_range_bytes = 0;
 };
 
-// 为按 ID 排序的文本请求合并读取范围，并统计有效字节与额外读取。
 TextPlan plan_ranges(const std::vector<TextRequest>& requests,
                      const ReadOptions& options) {
     TextPlan plan;
@@ -132,23 +115,17 @@ TextPlan plan_ranges(const std::vector<TextRequest>& requests,
     return plan;
 }
 
-// 按记录 ID 比较文本请求，供稳定排序使用。
 bool text_request_less(const TextRequest& left,
                        const TextRequest& right) {
     return left.id < right.id;
 }
 
-// 已读文本范围的回填上下文，由 pread 和 io_uring 完成路径共用。
 struct TextCopyContext {
-    // 用 range_index 查询范围边界以及关联的文本请求。
     const TextPlan* plan = nullptr;
-    // 借用的有序请求列表，每条请求保留自己的输出位置。
     const std::vector<TextRequest>* requests = nullptr;
-    // 调用方持有的结果批次，各任务只复制到自己的输出区间。
     TextBatch* batch = nullptr;
 };
 
-// 校验完成范围长度，并把其中各条文本复制到最终输出位置。
 void copy_text_range(void* opaque, size_t, size_t range_index,
                      const uint8_t* data, uint64_t bytes) {
     TextCopyContext* ctx = static_cast<TextCopyContext*>(opaque);
@@ -166,21 +143,14 @@ void copy_text_range(void* opaque, size_t, size_t range_index,
     }
 }
 
-// 文本 pread 工作线程的共享读取状态，按范围动态分配任务。
 struct TextReadContext {
-    // 借用的名称或描述数据文件描述符。
     int descriptor = -1;
-    // 要读取的有序文本范围计划，执行期间只读。
     const TextPlan* plan = nullptr;
-    // 读取后用于把各条文本复制到结果批次的共享上下文。
     TextCopyContext* copy = nullptr;
-    // 原子领取的下一范围下标，由调用方持有。
     std::atomic<size_t>* next_range = nullptr;
-    // 各线程独占写入自己的异常槽位，join 后由调用线程检查。
     std::vector<std::exception_ptr>* errors = nullptr;
 };
 
-// 动态领取文本范围，同步读取并复制结果，异常保存到线程槽位。
 void read_text_ranges(TextReadContext* ctx, size_t worker) noexcept {
     try {
         std::vector<uint8_t, NoInitAllocator<uint8_t>> buffer;
@@ -203,9 +173,7 @@ void read_text_ranges(TextReadContext* ctx, size_t worker) noexcept {
 
 }  // namespace
 
-// 文本列资源所有者：加载 AATEXT1 索引，按配置持有文件描述符或完整文本缓冲。
 struct TextColumn::Impl {
-    // 校验文本元数据和数据文件，常驻模式将完整文本读入自有缓冲。
     Impl(const std::filesystem::path& data_path,
          const std::filesystem::path& metadata_path,
          uint64_t expected_records,
@@ -283,17 +251,14 @@ struct TextColumn::Impl {
         }
     }
 
-    // 关闭文本文件；索引和常驻缓冲随成员析构释放。
     ~Impl() {
         if (descriptor_ >= 0) ::close(descriptor_);
     }
 
-    // 返回已读入自有缓冲的文本字节数，不含元数据，也不代表实时 RSS。
     uint64_t resident_bytes() const noexcept {
         return resident_data_.size();
     }
 
-    // 由块基址和相对偏移还原文本边界，允许查询末尾哨兵。
     uint64_t offset(uint64_t index) const {
         if (index > record_count_) {
             throw std::out_of_range("text-column id out of range");
@@ -309,7 +274,6 @@ struct TextColumn::Impl {
         return block_base + offsets_[index];
     }
 
-    // 查询文本长度，包含空字符串并拒绝倒置边界。
     uint64_t length(SequenceId id) const {
         if (id >= record_count_) {
             throw std::out_of_range("text-column id out of range");
@@ -321,14 +285,12 @@ struct TextColumn::Impl {
         return end - begin;
     }
 
-    // 按请求顺序建立输出布局，从常驻缓冲或合并读取范围填充文本批次。
     TextBatch batch_get(const std::vector<SequenceId>& ids,
                         const ReadOptions& options) const {
         TextBatch batch;
         batch.offsets.resize(ids.size());
         batch.lengths.resize(ids.size());
         batch.stats.requested_strings = ids.size();
-        // 单条常驻文本或显式 pread 直接填充结果，不创建请求和范围规划。
         if (ids.size() == 1 &&
             (resident_ || options.io_backend == IoBackend::Pread)) {
             if (ids[0] >= record_count_) {
@@ -458,27 +420,17 @@ struct TextColumn::Impl {
         return batch;
     }
 
-    // 文本记录数，打开时要求与序列总数一致，不计末尾边界。
     uint64_t record_count_ = 0;
-    // 文本数据文件总字节数，不含索引文件或额外终止符。
     uint64_t total_bytes_ = 0;
-    // 每块边界数的 log2，记录编号右移此值即可定位块基址。
     uint64_t block_shift_ = 0;
-    // 本对象持有的数据文件描述符；常驻正文载入后关闭并置为 -1。
     int descriptor_ = -1;
-    // 是否在打开时将完整文本读入自有缓冲；此后批读不再读取正文文件。
     bool resident_ = false;
-    // 本对象拥有的文本索引映射或缓冲，供 offsets_ 和 bases_ 借用。
     IndexData index_data_;
-    // 常驻模式持有的完整文本；普通模式或空列时为空，生命周期与读取器一致。
     std::vector<char, NoInitAllocator<char>> resident_data_;
-    // 按记录边界编号索引的 32 位块内字节偏移，共 record_count_ + 1 项。
     const uint32_t* offsets_ = nullptr;
-    // 64 位块字节基址数组的原始地址，按字节指针配合 memcpy 读取以兼容未对齐布局。
     const char* bases_ = nullptr;
 };
 
-// 打开文本列并校验记录数与序列数据库一致。
 TextColumn::TextColumn(const std::filesystem::path& data_path,
                        const std::filesystem::path& metadata_path,
                        uint64_t expected_records,
@@ -487,20 +439,16 @@ TextColumn::TextColumn(const std::filesystem::path& data_path,
     : impl_(std::make_unique<Impl>(
           data_path, metadata_path, expected_records, resident, index_load_mode)) {}
 
-// 释放文本列文件和索引资源。
 TextColumn::~TextColumn() = default;
-// 批量读取指定记录的文本，返回独立拥有数据的批次。
 TextBatch TextColumn::batch_get(const std::vector<SequenceId>& ids,
                                 const ReadOptions& options) const {
     return impl_->batch_get(ids, options);
 }
 
-// 从现有元数据查询一条记录的文本字节数。
 uint64_t TextColumn::length(SequenceId id) const {
     return impl_->length(id);
 }
 
-// 返回配置为常驻模式的文本数据大小，不含元数据。
 uint64_t TextColumn::resident_bytes() const noexcept {
     return impl_->resident_bytes();
 }

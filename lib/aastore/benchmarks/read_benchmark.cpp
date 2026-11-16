@@ -1,5 +1,3 @@
-// 文件职责：生成随机或顺序请求，比较不同驻留模式和 I/O 后端的读取成本。
-// 支持按字节分批、文件冷缓存验证，并输出耗时、内存、I/O 及有序结果校验值。
 #include "aastore/store.hpp"
 
 #include <algorithm>
@@ -53,7 +51,6 @@ struct Arguments {
     uint64_t max_exact_range_bytes = aastore::kMaxExactMergedRangeBytes;
 };
 
-// 解析 uint64_t 参数，并要求整个输入字符串均可转换。
 uint64_t parse_u64(const char* text, const char* name) {
     size_t consumed = 0;
     const std::string value(text);
@@ -67,7 +64,6 @@ uint64_t parse_u64(const char* text, const char* name) {
     return result;
 }
 
-// 解析有符号 64 位参数，供含负值约定的内存选项使用。
 int64_t parse_i64(const char* text, const char* name) {
     size_t consumed = 0;
     const std::string value(text);
@@ -78,7 +74,6 @@ int64_t parse_i64(const char* text, const char* name) {
     return result;
 }
 
-// 读取选项后的参数值，缺失时报告选项名称。
 const char* next_argument(int argc, char** argv, int* index,
                           const char* name) {
     ++*index;
@@ -89,7 +84,6 @@ const char* next_argument(int argc, char** argv, int* index,
     return argv[*index];
 }
 
-// 解析读取基准的请求生成、存储模式、I/O 后端和范围规划选项。
 Arguments parse_arguments(int argc, char** argv) {
     if (argc < 2) {
         throw std::invalid_argument(
@@ -225,7 +219,6 @@ Arguments parse_arguments(int argc, char** argv) {
     return arguments;
 }
 
-// 返回基准支持的存储模式标签，未匹配模式返回 unknown。
 const char* storage_mode_name(aastore::StorageMode mode) {
     switch (mode) {
         case aastore::StorageMode::NoMemory: return "no_memory";
@@ -235,7 +228,6 @@ const char* storage_mode_name(aastore::StorageMode mode) {
     return "unknown";
 }
 
-// 返回命令行请求的 I/O 后端标签。
 const char* requested_io_backend_name(aastore::IoBackend backend) {
     switch (backend) {
         case aastore::IoBackend::Auto: return "auto";
@@ -245,13 +237,11 @@ const char* requested_io_backend_name(aastore::IoBackend backend) {
     return "unknown";
 }
 
-// 根据本批统计给出实际使用的 I/O 后端标签。
 const char* active_io_backend_name(const aastore::BatchStats& stats) {
     if (stats.ranges == 0) return "none";
     return stats.io_uring ? "io_uring" : "pread";
 }
 
-// 推进 SplitMix64 状态并返回可复现的伪随机整数。
 uint64_t splitmix64(uint64_t& state) {
     uint64_t value = (state += 0x9E3779B97F4A7C15ULL);
     value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -259,7 +249,6 @@ uint64_t splitmix64(uint64_t& state) {
     return value ^ (value >> 31);
 }
 
-// 生成顺序循环或伪随机 ID 列表，用于可复现的读取负载。
 std::vector<aastore::SequenceId> make_ids(uint64_t size,
                                           uint64_t count,
                                           uint64_t seed,
@@ -281,7 +270,6 @@ std::vector<aastore::SequenceId> make_ids(uint64_t size,
     return ids;
 }
 
-// 从文本文件读取 ID 列表，格式错误时报告异常。
 std::vector<aastore::SequenceId> read_ids_file(
         const std::filesystem::path& path) {
     std::ifstream input(path);
@@ -297,7 +285,6 @@ std::vector<aastore::SequenceId> read_ids_file(
     return ids;
 }
 
-// 使用 Floyd 算法无放回抽样后打乱请求顺序，仅需与抽样数成正比的内存。
 std::vector<aastore::SequenceId> sample_ids(uint64_t size, long double percent,
                                            uint64_t seed) {
     const uint64_t count = size == 0 ? 0 : std::max<uint64_t>(
@@ -317,7 +304,6 @@ std::vector<aastore::SequenceId> sample_ids(uint64_t size, long double percent,
     return ids;
 }
 
-// 通过 mmap 和 mincore 查询文件的驻留页数，不读取映射内容以免主动预热。
 uint64_t resident_pages(int descriptor, size_t bytes) {
     if (bytes == 0) return 0;
     const long page_size = ::sysconf(_SC_PAGESIZE);
@@ -345,7 +331,6 @@ uint64_t resident_pages(int descriptor, size_t bytes) {
     return resident;
 }
 
-// 打开 Store 前同步并请求驱逐指定文件缓存，再验证驻留页数，不清理其他文件。
 void drop_file_cache(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) return;
     const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -383,13 +368,11 @@ void drop_file_cache(const std::filesystem::path& path) {
 #endif
 }
 
-// 计算从指定时刻到现在经过的毫秒数。
 double elapsed_ms(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(
         Clock::now() - start).count();
 }
 
-// Linux 进程存储读取计数，包含预读；与应用请求的 read_bytes 分开报告。
 bool storage_read_bytes(uint64_t& bytes) {
     std::ifstream input("/proc/self/io");
     std::string key;
@@ -403,26 +386,22 @@ bool storage_read_bytes(uint64_t& bytes) {
     return false;
 }
 
-// 将 timeval 中的秒和微秒统一换算为毫秒。
 double time_ms(const timeval& value) {
     return value.tv_sec * 1000.0 + value.tv_usec / 1000.0;
 }
 
 constexpr uint64_t kHashBasis = 14695981039346656037ULL;
 
-// 将一个字节累入 FNV-1a 64 位校验值。
 void hash_byte(uint64_t& hash, uint8_t byte) {
     hash = (hash ^ byte) * 1099511628211ULL;
 }
 
-// 按小端字节序将一个 64 位整数累入校验值，避免依赖机器端序。
 void hash_number(uint64_t& hash, uint64_t number) {
     for (unsigned shift = 0; shift < 64; shift += 8) {
         hash_byte(hash, static_cast<uint8_t>(number >> shift));
     }
 }
 
-// 合并批次统计：累计计数和耗时、保留峰值，并汇总实际使用过的模式标志。
 void accumulate(aastore::BatchStats& total, const aastore::BatchStats& part) {
     using S = aastore::BatchStats;
     static constexpr uint64_t S::* sums[] = {
@@ -450,7 +429,6 @@ void accumulate(aastore::BatchStats& total, const aastore::BatchStats& part) {
 
 }  // namespace
 
-// 执行配置的读取基准轮次，并输出吞吐量、内存和 I/O 统计。
 int main(int argc, char** argv) {
     try {
         const Arguments arguments = parse_arguments(argc, argv);

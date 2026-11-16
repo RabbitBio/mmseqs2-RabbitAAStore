@@ -1,4 +1,3 @@
-# 文件职责：导出 RabbitAAStore 的 Python 接口，并将建库关键字参数转交给 C++ 核心。
 """Compact FASTA storage backed by the RabbitAAStore C++ library."""
 
 from ._aastore import (
@@ -28,7 +27,6 @@ __all__ = [
 ]
 
 
-# 复制调用方选项后应用显式覆盖值，不修改可复用的 BuildOptions 对象。
 def build_fasta(fasta, store, options=None, *, threads=None, overwrite=None,
                 write_names=None, write_descriptions=None):
     """Build a store in input order; optional keywords override BuildOptions."""

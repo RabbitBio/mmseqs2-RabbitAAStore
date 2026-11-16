@@ -1,5 +1,3 @@
-// 文件职责：校验并加载 AAPCMP3 元数据，查询序列边界及 packed 数据大小。
-// 负责元数据格式、尺寸和索引范围检查，以及索引资源的释放。
 #include "metadata.hpp"
 
 #include <cstring>
@@ -11,14 +9,12 @@
 namespace aastore {
 namespace {
 
-// 从输入流读取一个定长二进制字段，返回读取是否成功。
 template <typename T>
 bool read_value(std::istream& input, T& value) {
     input.read(reinterpret_cast<char*>(&value), sizeof(value));
     return static_cast<bool>(input);
 }
 
-// 校验字节数可以用 size_t 表示，超出地址空间时报告错误。
 size_t checked_size(uint64_t value, const char* description) {
     if (value > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
         throw std::runtime_error(description);
@@ -28,15 +24,12 @@ size_t checked_size(uint64_t value, const char* description) {
 
 }  // namespace
 
-// 打开并校验数据库元数据，加载边界索引。
 Metadata::Metadata(const std::filesystem::path& store, IndexLoadMode mode) {
     open(store, mode);
 }
 
-// 释放元数据索引资源。
 Metadata::~Metadata() { clear(); }
 
-// 释放索引并重置偏移指针与计数。
 void Metadata::clear() noexcept {
     index_data_.clear();
     offsets_ = nullptr;
@@ -44,25 +37,21 @@ void Metadata::clear() noexcept {
     block_shift_ = 0;
 }
 
-// 计算连续 5 位数据占用的字节数，拆分商和余数避免乘法溢出。
 uint64_t Metadata::packed_bytes() const noexcept {
     return (total_residues_ / 8) * 5 +
            ((total_residues_ % 8) * 5 + 7) / 8;
 }
 
-// 返回指定序列边界的全局残基偏移，允许读取末尾哨兵边界。
 uint64_t Metadata::start_position(uint64_t index) const {
     if (index > sequence_count_) {
         throw std::out_of_range("sequence index out of range");
     }
     const uint64_t block = index >> block_shift_;
     uint64_t base = 0;
-    // 偏移数组长度可能使块基址仅四字节对齐，使用 memcpy 保持现有磁盘布局。
     std::memcpy(&base, bases_ + block * sizeof(base), sizeof(base));
     return base + offsets_[index];
 }
 
-// 读取并校验唯一支持的 AAPCMP3 元数据格式。
 void Metadata::open(const std::filesystem::path& store, IndexLoadMode mode) {
     const std::filesystem::path path = store / "meta.bin";
     std::ifstream input(path, std::ios::binary);

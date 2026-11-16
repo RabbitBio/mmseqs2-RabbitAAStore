@@ -1,5 +1,3 @@
-// 文件职责：使用临时小库检查建库、运行时解码、线程和读取后端是否可用。
-// 只调用公开接口；这是构建后的环境检查，不是性能基准。
 #include <aastore/store.hpp>
 
 #include <cstdlib>
@@ -13,18 +11,15 @@
 
 namespace {
 
-// 不使用 assert，保证 Release 构建中也实际检查结果。
 void check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-// 每个 case 独占临时目录，并保留未编码原文用于逐条核对。
 struct Fixture {
-    std::filesystem::path root;          // 自动清理的临时根目录。
-    std::vector<std::string> sequences;   // 按 ID 排列的预期序列。
-    std::vector<aastore::SequenceId> ids; // 包含乱序、重复 ID 和空序列的请求。
+    std::filesystem::path root;
+    std::vector<std::string> sequences;
+    std::vector<aastore::SequenceId> ids;
 
-    // 创建唯一临时目录，允许多个 CTest 进程并行执行。
     Fixture() {
         std::string pattern = (std::filesystem::temp_directory_path() /
             "aastore-smoke-XXXXXX").string();
@@ -32,13 +27,11 @@ struct Fixture {
         root = pattern;
     }
 
-    // 无论检查成功还是抛出异常，都删除本 case 的输入和输出。
     ~Fixture() {
         std::error_code error;
         std::filesystem::remove_all(root, error);
     }
 
-    // 生成不到 24 KiB 的 FASTA，并用两个线程的预算建库。
     void build() {
         const std::string alphabet = "ACDEFGHIKLMNPQRSTVWY";
         std::ofstream fasta(root / "input.fa");
@@ -61,12 +54,10 @@ struct Fixture {
         const auto built = aastore::build_fasta(root / "input.fa", root / "store", options);
         check(built.sequences == sequences.size() && built.residues == residues,
               "FASTA build statistics mismatch");
-        // 请求量足以走多线程 FullMemory 解码，实际输出仍不到 320 KiB。
         for (size_t i = 0; i < 4096; ++i) ids.push_back((i * 73 + 19) % sequences.size());
     }
 };
 
-// 设置小范围和小队列，确保小数据也能覆盖多个 I/O 范围与槽位复用。
 aastore::ReadOptions read_options(aastore::IoBackend backend, size_t threads) {
     aastore::ReadOptions options;
     options.io_backend = backend;
@@ -79,7 +70,6 @@ aastore::ReadOptions read_options(aastore::IoBackend backend, size_t threads) {
     return options;
 }
 
-// 按原始请求顺序检查每条序列，不以校验和替代完整比较。
 void check_batch(const Fixture& fixture, const aastore::Batch& batch) {
     check(batch.size() == fixture.ids.size(), "batch size mismatch");
     for (size_t i = 0; i < fixture.ids.size(); ++i) {
@@ -88,7 +78,6 @@ void check_batch(const Fixture& fixture, const aastore::Batch& batch) {
     }
 }
 
-// 检查 pread、用户缓冲写入、连续读取及名称和描述的往返一致性。
 void check_pread(const Fixture& fixture) {
     aastore::Store store(fixture.root / "store");
     std::cout << "decode kernel: " << store.decode_kernel_name() << '\n';
@@ -129,7 +118,6 @@ void check_pread(const Fixture& fixture) {
     }
 }
 
-// 检查混合前缀命中/磁盘未命中、全内存解码，以及常驻文本列。
 void check_memory(const Fixture& fixture) {
     for (const auto mode : {aastore::StorageMode::PartialMemory,
                             aastore::StorageMode::FullMemory}) {
@@ -160,7 +148,6 @@ void check_memory(const Fixture& fixture) {
     }
 }
 
-// 检查自动后端的结果；不可用环境中也必须通过 pread 成功读取。
 void check_auto(const Fixture& fixture) {
     aastore::Store store(fixture.root / "store");
     const auto batch = store.get(fixture.ids, read_options(aastore::IoBackend::Auto, 2));
@@ -169,7 +156,6 @@ void check_auto(const Fixture& fixture) {
     std::cout << "Auto selected: " << (batch.stats.io_uring ? "io_uring" : "pread") << '\n';
 }
 
-// 仅初始化/操作码不可用允许跳过；实际 I/O 错误和结果错误必须失败。
 int check_uring(const Fixture& fixture) {
     aastore::Store store(fixture.root / "store");
     try {
@@ -194,7 +180,6 @@ int check_uring(const Fixture& fixture) {
 
 }  // namespace
 
-// 每次进程执行一个独立 case，错误返回非零供 CTest 和构建工具捕获。
 int main(int argc, char** argv) {
     try {
         check(argc == 2, "usage: aastore_smoke_test pread|memory|auto|io_uring");

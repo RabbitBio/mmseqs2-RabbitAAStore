@@ -1,5 +1,3 @@
-// 文件职责：直接验证各解码内核，避免本机默认 AVX-512 掩盖 BMI2 尾块错误。
-// 此测试独立编译 codec.cpp，不链接 aastore，不改变生产接口或运行时分派。
 #include "../src/codec.cpp"
 #include "guarded_buffer.hpp"
 
@@ -35,7 +33,6 @@ unsigned character_code(char value) {
     return value == '*' ? 27 : value == '-' ? 28 : static_cast<unsigned>(value - '@');
 }
 
-// 输入用独立的逐位编码构造，解码期望值也不调用生产转换函数。
 void check(const Kernel& kernel, const std::vector<unsigned>& codes, size_t offset,
            GuardedBuffer& input, GuardedBuffer& result) {
     const size_t bytes = (5 * (offset + codes.size()) + 7) / 8;
@@ -102,7 +99,6 @@ int main() {
                     check(kernel, codes, offset, input, result);
                     ++cases;
                 }
-                // 枚举全部32×32相邻码；同时覆盖字节、8字节lane与向量边界。
                 std::vector<size_t> positions;
                 for (size_t index = 0; index + 1 < kernel.width; ++index) {
                     if (kernel.width == 8 || index == 0 || index % 8 == 7 ||

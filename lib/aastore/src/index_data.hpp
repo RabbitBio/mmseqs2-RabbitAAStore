@@ -1,4 +1,3 @@
-// 文件职责：统一持有边界索引的只读映射或完整读取缓冲。
 #ifndef AASTORE_INDEX_DATA_HPP
 #define AASTORE_INDEX_DATA_HPP
 
@@ -24,7 +23,6 @@ public:
     IndexData(const IndexData&) = delete;
     IndexData& operator=(const IndexData&) = delete;
 
-    // 打开前调用方已校验文件尺寸；读错或短读直接报告，不切换加载方式。
     void open(const std::filesystem::path& path, size_t bytes, IndexLoadMode mode) {
         if (mode != IndexLoadMode::Mmap && mode != IndexLoadMode::Read) {
             throw std::invalid_argument("unknown index load mode");
