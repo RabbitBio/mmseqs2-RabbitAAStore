@@ -3,7 +3,6 @@
 /cmake-build-*/
 /tests/build/
 /tests/aastore_build
-/tests/aastore_bench
 /tests/aastore_test
 /tests/aastore_*_test
 /examples/.objects/
@@ -27,7 +26,7 @@ compile_commands.json
 *.dylib
 *.exe
 
-# Test and benchmark output
+# Test output
 Testing/
 *.log
 *.out

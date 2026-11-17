@@ -37,7 +37,6 @@ jobs:
             -DAASTORE_ENABLE_IO_URING=${{ matrix.io_uring }} \
             -DAASTORE_BUILD_TESTS=ON \
             -DAASTORE_BUILD_TOOLS=ON \
-            -DAASTORE_BUILD_BENCHMARKS=ON \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/aastore-prefix"
           cmake --build build --parallel 2
       - name: Test library

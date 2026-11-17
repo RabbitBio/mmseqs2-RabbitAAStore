@@ -36,7 +36,6 @@ selects AVX-512, AVX2/BMI2, or scalar kernels according to CPU capabilities;
 | CMake option | Default behavior |
 | --- | --- |
 | `AASTORE_BUILD_TOOLS` | Enabled for a top-level build; disabled when embedded with `add_subdirectory`. |
-| `AASTORE_BUILD_BENCHMARKS` | Disabled; enabled explicitly by the test Makefile and CI. |
 | `AASTORE_BUILD_TESTS` | Full regression suite disabled; run `make` in `tests/` to build it. |
 | `AASTORE_RUN_SMOKE_TESTS` | Run small environment checks after a default native, standalone build; disabled by default for embedded and cross builds. |
 | `BUILD_SHARED_LIBS` | Disabled by default in a top-level build; enable to build a shared library. |
@@ -48,7 +47,7 @@ To build and install only the C++ SDK:
 
 ```bash
 cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release \
-  -DAASTORE_BUILD_TOOLS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF \
+  -DAASTORE_BUILD_TOOLS=OFF \
   -DAASTORE_BUILD_TESTS=OFF -DAASTORE_RUN_SMOKE_TESTS=OFF
 cmake --build build-sdk -j 4
 cmake --install build-sdk --prefix "$HOME/.local"

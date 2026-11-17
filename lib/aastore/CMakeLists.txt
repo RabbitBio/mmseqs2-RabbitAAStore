@@ -1,4 +1,4 @@
-# Build and install the C++ SDK, optional tools, benchmarks, and Python bindings.
+# Build and install the C++ SDK, optional tools, and Python bindings.
 cmake_minimum_required(VERSION 3.16)
 
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" AASTORE_VERSION LIMIT_COUNT 1)
@@ -18,7 +18,6 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 option(AASTORE_BUILD_TESTS "Build the full RabbitAAStore regression tests" OFF)
 option(AASTORE_BUILD_TOOLS "Build RabbitAAStore command-line tools" ${AASTORE_IS_TOP_LEVEL})
-option(AASTORE_BUILD_BENCHMARKS "Build RabbitAAStore benchmarks" OFF)
 option(AASTORE_BUILD_PYTHON "Build the Python bindings" OFF)
 option(AASTORE_ENABLE_IO_URING "Enable the Linux io_uring read backend" ON)
 set(AASTORE_SMOKE_DEFAULT ${AASTORE_IS_TOP_LEVEL})
@@ -246,11 +245,6 @@ if(AASTORE_BUILD_TOOLS)
     unset(_aastore_tools_libdir)
     install(TARGETS aastore_build
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
-endif()
-
-if(AASTORE_BUILD_BENCHMARKS)
-    add_executable(aastore_bench benchmarks/read_benchmark.cpp)
-    target_link_libraries(aastore_bench PRIVATE aastore)
 endif()
 
 if(AASTORE_BUILD_TESTS OR AASTORE_RUN_SMOKE_TESTS)

@@ -40,7 +40,7 @@ with `pread`. To disable liburing detection, add
 `-DAASTORE_ENABLE_IO_URING=OFF` to the configure command.
 
 The default standalone build also runs small environment smoke checks. Full
-regression tests and benchmarks are separate build options. See
+regression tests can be enabled with a separate build option. See
 [tests/README.md](tests/README.md) for test commands and
 [docs/releasing.md](docs/releasing.md#selecting-tests-and-cross-compiling) for
 build-time checks and cross-compilation.
@@ -231,7 +231,6 @@ Start with the [documentation index](docs/README.md), or choose a guide:
 | [C++ API guide](docs/cpp_api.md) | Construction, reads, field selection, memory settings, buffers, and statistics. |
 | [Python API guide](docs/python_api.md) | Installation, options, sequence and record access, buffer views, and lifetimes. |
 | [Examples](examples/README.md) | Standalone C++ and Python examples using the bundled dataset. |
-| [Benchmarks](benchmarks/README.md) | Benchmark commands, cold-cache runs, and timing definitions. |
 | [Tests](tests/README.md) | Build and run the regression suite. |
 | [Release guide](docs/releasing.md) | Supported configurations, SDK validation, and version compatibility. |
 | [Changelog](CHANGELOG.md) | Changes and API migration notes. |

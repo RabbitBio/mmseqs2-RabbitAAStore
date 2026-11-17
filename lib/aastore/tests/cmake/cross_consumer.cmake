@@ -117,7 +117,7 @@ foreach(mode IN ITEMS without-emulator with-emulator)
     aastore_test_run_checked("${CMAKE_COMMAND}" -S "${AASTORE_SOURCE_DIR}" -B "${producer_build}"
         ${generator_args} "-DCMAKE_TOOLCHAIN_FILE=toolchains/cross toolchain.cmake"
         -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DAASTORE_BUILD_TESTS=ON
-        -DAASTORE_BUILD_TOOLS=OFF -DAASTORE_BUILD_BENCHMARKS=OFF -DAASTORE_BUILD_PYTHON=OFF
+        -DAASTORE_BUILD_TOOLS=OFF -DAASTORE_BUILD_PYTHON=OFF
         -DAASTORE_ENABLE_IO_URING=OFF -DAASTORE_ENABLE_IPO=OFF)
     aastore_test_run_checked("${CMAKE_COMMAND}" --build "${producer_build}"
         --config Release --target aastore --parallel 2)

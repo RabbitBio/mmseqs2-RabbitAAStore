@@ -9,7 +9,6 @@ CMAKE ?= cmake
 CTEST ?= ctest
 PYTHON ?= OFF
 IO_URING ?= ON
-BENCHMARKS ?= ON
 CMAKE_ARGS ?=
 CTEST_ARGS ?=
 
@@ -22,7 +21,7 @@ configure:
 		-DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" \
 		-DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$$<1:$(SOURCE_DIR)/tests>" \
 		-DAASTORE_BUILD_TESTS=ON -DAASTORE_RUN_SMOKE_TESTS=OFF \
-		-DAASTORE_BUILD_TOOLS=ON -DAASTORE_BUILD_BENCHMARKS=$(BENCHMARKS) \
+		-DAASTORE_BUILD_TOOLS=ON \
 		-DAASTORE_BUILD_PYTHON=$(PYTHON) -DAASTORE_ENABLE_IO_URING=$(IO_URING) \
 		$(CMAKE_ARGS)
 
@@ -46,4 +45,4 @@ help:
 		'  make test CTEST_ARGS="-L sequential" Select a test label' \
 		'  make clean                          Clean compiled files, keeping the cache' \
 		'Options: JOBS=4 BUILD_TYPE=Release BUILD_DIR=/path/to/test-build' \
-		'         PYTHON=ON IO_URING=OFF BENCHMARKS=OFF CMAKE_ARGS="..." CTEST_ARGS="..."'
+		'         PYTHON=ON IO_URING=OFF CMAKE_ARGS="..." CTEST_ARGS="..."'

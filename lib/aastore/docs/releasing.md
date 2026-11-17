@@ -41,8 +41,7 @@ including liburing and pthread checks when a toolchain normally uses
 STATIC_LIBRARY for try_compile. The relocated SDK test preserves toolchain,
 sysroot, compiler flags and emulator lists. Target tests run through the emulator
 when configured; otherwise they are disabled and SDK validation covers only
-configure/build. Python and benchmark script tests are registered for native
-builds only.
+configure/build. Python script tests are registered for native builds only.
 
 The io_uring backend selects READ when supported and otherwise uses READV.
 Kernels without opcode probing, including Linux 5.4, use READV and keep each

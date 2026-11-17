@@ -193,7 +193,6 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/aastore/cmake")
 find_package(AAStoreUring REQUIRED)
 option(AASTORE_BUILD_TESTS "Build RabbitAAStore library tests" OFF)
 option(AASTORE_BUILD_TOOLS "Build RabbitAAStore command-line tools" ON)
-option(AASTORE_BUILD_BENCHMARKS "Build RabbitAAStore benchmarks" ON)
 add_subdirectory(lib/aastore EXCLUDE_FROM_ALL)
 # Compiler-specific features
 # if (CMAKE_COMPILER_IS_CLANG AND (NOT EMSCRIPTEN))

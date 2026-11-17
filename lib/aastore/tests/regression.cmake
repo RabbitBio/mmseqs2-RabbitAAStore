@@ -63,16 +63,8 @@ if(AASTORE_HAVE_IO_URING)
     list(APPEND _aastore_runtime_tests aastore_io_uring_test)
     set_tests_properties(aastore_io_uring_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND AND NOT CMAKE_CROSSCOMPILING
-   AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
-   AND TARGET aastore_build AND TARGET aastore_bench)
-    add_test(NAME aastore_benchmark_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py
-            $<TARGET_FILE:aastore_build> $<TARGET_FILE:aastore_bench>)
-endif()
 if(CMAKE_CROSSCOMPILING)
-    message(STATUS "Cross build: host Python and benchmark script tests are not registered")
+    message(STATUS "Cross build: host Python tests are not registered")
     if(NOT CMAKE_CROSSCOMPILING_EMULATOR)
         set_tests_properties(${_aastore_runtime_tests} PROPERTIES DISABLED TRUE)
         message(STATUS "Cross build without emulator: target runtime tests are disabled")
