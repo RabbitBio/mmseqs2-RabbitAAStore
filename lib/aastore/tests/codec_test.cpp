@@ -1,12 +1,20 @@
 #include "../src/codec.hpp"
+#include "../src/simd_config.hpp"
 #include "guarded_buffer.hpp"
 
 #include <algorithm>
 #include <iostream>
+#include <string>
 
 using aastore_test::GuardedBuffer;
 
 int main() {
+    const std::string kernel = aastore::packed_5bit_decode_kernel_name();
+    if ((AASTORE_MAX_SIMD_BITS == 0 && kernel != "scalar_unrolled_32") ||
+        (AASTORE_MAX_SIMD_BITS == 256 && kernel.find("avx512") == 0)) {
+        std::cerr << "kernel exceeds configured SIMD level: " << kernel << '\n';
+        return 1;
+    }
     GuardedBuffer packed_buffer;
     GuardedBuffer output_buffer;
     size_t cases = 0;

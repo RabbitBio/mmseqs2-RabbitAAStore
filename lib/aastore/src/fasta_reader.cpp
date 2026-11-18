@@ -1,4 +1,5 @@
 #include "fasta_reader.hpp"
+#include "simd_config.hpp"
 
 #include <array>
 #include <cerrno>
@@ -8,7 +9,7 @@
 #include <unistd.h>
 #include <vector>
 
-#if defined(__x86_64__) || defined(__i386__)
+#if AASTORE_MAX_SIMD_BITS > 0 && (defined(__x86_64__) || defined(__i386__))
 #include <immintrin.h>
 #define AASTORE_FASTA_READER_X86_SIMD 1
 #else
@@ -101,6 +102,7 @@ SequenceChunkScan scan_sequence_chunk_avx2(const char* input,
     return tail;
 }
 
+#if AASTORE_MAX_SIMD_BITS >= 512
 __attribute__((target("avx512f,avx512bw")))
 SequenceChunkScan scan_sequence_chunk_avx512(const char* input,
                                              size_t length) {
@@ -140,6 +142,7 @@ SequenceChunkScan scan_sequence_chunk_avx512(const char* input,
     return tail;
 }
 #endif
+#endif
 
 using SequenceChunkScanner = SequenceChunkScan (*)(const char*, size_t);
 
@@ -147,11 +150,13 @@ SequenceChunkScanner detect_sequence_chunk_scanner() {
 #if AASTORE_FASTA_READER_X86_SIMD && \
     (defined(__GNUC__) || defined(__clang__))
     __builtin_cpu_init();
+#if AASTORE_MAX_SIMD_BITS >= 512
     if (__builtin_cpu_supports("avx512f") &&
         __builtin_cpu_supports("avx512bw") &&
         __builtin_cpu_supports("avx2")) {
         return scan_sequence_chunk_avx512;
     }
+#endif
     if (__builtin_cpu_supports("avx2")) return scan_sequence_chunk_avx2;
 #endif
     return scan_sequence_chunk_scalar;

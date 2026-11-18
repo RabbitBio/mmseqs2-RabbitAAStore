@@ -18,7 +18,7 @@ struct Kernel {
     Decode decode;
 };
 
-#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#if AASTORE_MAX_SIMD_BITS > 0 && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 void decode_bmi2_8(const uint8_t* packed, uint64_t offset, char* output) {
     const uint64_t word = aastore::decode_8_bmi2_word(packed + offset / 8 * 5);
     std::memcpy(output, &word, sizeof(word));
@@ -67,7 +67,7 @@ void check(const Kernel& kernel, const std::vector<unsigned>& codes, size_t offs
 int main() {
     try {
         std::vector<Kernel> kernels{{"scalar8", 8, aastore::decode_8_scalar}};
-#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+#if AASTORE_MAX_SIMD_BITS > 0 && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
         __builtin_cpu_init();
         if (__builtin_cpu_supports("bmi2")) {
             kernels.push_back({"bmi2_8", 8, decode_bmi2_8});
@@ -76,6 +76,7 @@ int main() {
             kernels.push_back({"avx2_bmi2_16", 16, aastore::decode_16_avx2_bmi2});
             kernels.push_back({"avx2_bmi2_32", 32, aastore::decode_32_avx2_bmi2});
         }
+#if AASTORE_MAX_SIMD_BITS >= 512
         if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
             __builtin_cpu_supports("avx512vl") && __builtin_cpu_supports("avx512vbmi") &&
             __builtin_cpu_supports("avx512vbmi2")) {
@@ -83,6 +84,7 @@ int main() {
             kernels.push_back({"avx512_vbmi2_32", 32, aastore::decode_32_avx512_vbmi2});
             kernels.push_back({"avx512_vbmi2_64", 64, aastore::decode_64_avx512_vbmi2});
         }
+#endif
 #endif
         GuardedBuffer input;
         GuardedBuffer result;

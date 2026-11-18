@@ -43,9 +43,9 @@ cmake -S . -B build-aastore
 cmake --build build-aastore -j8
 ```
 
-The bundled source is an exact copy of the tracked files from
-[`RabbitBio/AABinaryStore` at `d029762804fa6e0fba61bf7ef2af564c189afaea`](https://github.com/RabbitBio/AABinaryStore/tree/d029762804fa6e0fba61bf7ef2af564c189afaea),
-without local library patches. Git metadata and local build outputs are not bundled.
+The library is bundled from [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore),
+with the build-time SIMD profiles described below. Git metadata and local build
+outputs are not bundled.
 The Scan strategy and its public options/counters have been removed in sync
 with the standalone library; existing Sparse range merging is unchanged.
 Resident name and description columns likewise use Store-owned buffers
@@ -61,6 +61,29 @@ checkout or prebuilt archive is selected. Linux `liburing` is required.
 The RabbitAAStore library is linked into `mmseqs`. Standalone tools are not part of
 the default build or MMseqs2 installation, but remain available as explicit
 build targets for tests or independent use.
+
+### SIMD profiles for prebuilt binaries
+
+`AASTORE_SIMD_LEVEL` sets the maximum compiled RabbitAAStore SIMD level for
+sequence packing, decoding and FASTA scanning. `AUTO` is the default and preserves
+runtime CPU detection. `AVX512` allows the same kernels as `AUTO`; `AVX2` excludes
+AVX-512 kernels; `SCALAR` excludes the specialized SIMD/BMI2 kernels and disables
+compiler loop vectorization for RabbitAAStore. Runtime dispatch still checks CPU
+features within the selected limit. Database formats and sequence results do not
+depend on this setting.
+
+| Package | RabbitAAStore limit | MMseqs2 CMake setting |
+| --- | --- | --- |
+| AVX-512 | `-DAASTORE_SIMD_LEVEL=AVX512` | `-DHAVE_AVX2=1` |
+| AVX2 | `-DAASTORE_SIMD_LEVEL=AVX2` | `-DHAVE_AVX2=1` |
+| Scalar | `-DAASTORE_SIMD_LEVEL=SCALAR` | `-DHAVE_SSE2=1` |
+
+Use `-DNATIVE_ARCH=0` when building for distribution. MMseqs2's AVX2 baseline
+requires AVX2, FMA and CMPXCHG16B; RabbitAAStore's AVX2 decoder additionally uses
+BMI2. Its AVX-512 decoder uses AVX512F, AVX512BW, AVX512VL, AVX512VBMI and
+AVX512VBMI2. The scalar package retains MMseqs2's baseline SSE2 implementation.
+These CPU packages do not include CUDA or MPI. Nonresident RabbitAAStore sequence
+access in this integration requires Linux io_uring to be available to the process.
 
 ## Automatic workflows
 

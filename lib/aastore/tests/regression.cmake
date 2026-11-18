@@ -22,11 +22,13 @@ endforeach()
 unset(_aastore_group)
 add_executable(aastore_codec_test tests/codec_test.cpp)
 target_link_libraries(aastore_codec_test PRIVATE aastore)
+target_compile_definitions(aastore_codec_test PRIVATE AASTORE_MAX_SIMD_BITS=${_aastore_simd_bits})
 add_test(NAME aastore_codec_test COMMAND aastore_codec_test)
 # Include the private kernels in one independent test TU. Do not link aastore:
 # the test already contains codec.cpp's public definitions, including with IPO.
 add_executable(aastore_codec_kernels_test tests/codec_kernels_test.cpp)
 target_compile_features(aastore_codec_kernels_test PRIVATE cxx_std_17)
+target_compile_definitions(aastore_codec_kernels_test PRIVATE AASTORE_MAX_SIMD_BITS=${_aastore_simd_bits})
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(aastore_codec_kernels_test PRIVATE -Wall -Wextra -Wpedantic)
 endif()

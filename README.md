@@ -2,6 +2,14 @@
 
 ## MMseqs2 With RabbitAAStore
 
+Prebuilt Linux x86_64 packages are available from this fork's
+[Releases](https://github.com/RabbitBio/mmseqs2-RabbitAAStore/releases).
+The AVX-512 and AVX2 packages use MMseqs2's AVX2 implementation and different
+RabbitAAStore SIMD limits. The scalar package uses scalar RabbitAAStore kernels
+with MMseqs2's SSE2 implementation; it does not require AVX2. Each package includes
+a small FASTA example, a runnable example script and CPU requirements. SHA256
+checksums are provided alongside the downloads.
+
 This fork bundles RabbitAAStore. On Linux with `liburing` development files installed,
 use the usual source build commands:
 

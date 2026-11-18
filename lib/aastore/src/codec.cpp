@@ -1,9 +1,10 @@
 #include "codec.hpp"
+#include "simd_config.hpp"
 
 #include <cstdint>
 #include <cstring>
 
-#if defined(__x86_64__) || defined(__i386__)
+#if AASTORE_MAX_SIMD_BITS > 0 && (defined(__x86_64__) || defined(__i386__))
 #include <immintrin.h>
 #define AASTORE_X86_SIMD 1
 #else
@@ -90,6 +91,7 @@ void pack_8_blocks_bmi2(const char* input,
     }
 }
 
+#if AASTORE_MAX_SIMD_BITS >= 512
 __attribute__((target("avx512f,avx512bw,avx512vbmi2,bmi2")))
 void pack_8_blocks_avx512_vbmi2(const char* input,
                                 uint8_t* output,
@@ -123,18 +125,21 @@ void pack_8_blocks_avx512_vbmi2(const char* input,
     pack_8_blocks_bmi2(input, output, block_count);
 }
 #endif
+#endif
 
 using PackBlocksKernel = void (*)(const char*, uint8_t*, size_t);
 
 PackBlocksKernel detect_pack_blocks_kernel() {
 #if AASTORE_X86_SIMD && (defined(__GNUC__) || defined(__clang__))
     __builtin_cpu_init();
+#if AASTORE_MAX_SIMD_BITS >= 512
     if (__builtin_cpu_supports("avx512f") &&
         __builtin_cpu_supports("avx512bw") &&
         __builtin_cpu_supports("avx512vbmi2") &&
         __builtin_cpu_supports("bmi2")) {
         return pack_8_blocks_avx512_vbmi2;
     }
+#endif
     if (__builtin_cpu_supports("bmi2")) return pack_8_blocks_bmi2;
 #endif
     return pack_8_blocks_scalar;
@@ -170,6 +175,7 @@ char code_to_char(uint8_t code) {
     return static_cast<char>(ascii ^ ((is_stop | is_flank) * 0x71U));
 }
 
+#if AASTORE_X86_SIMD && (defined(__GNUC__) || defined(__clang__))
 uint64_t fix_stop_chars(uint64_t ascii) {
     constexpr uint64_t kStop = 0x5B5B5B5B5B5B5B5BULL;
     constexpr uint64_t kFlank = 0x5C5C5C5C5C5C5C5CULL;
@@ -182,6 +188,7 @@ uint64_t fix_stop_chars(uint64_t ascii) {
          ~((flank_x | kHighBits) - kLowBits)) & kHighBits;
     return ascii ^ ((high_mask >> 7) * 0x71ULL);
 }
+#endif
 
 void decode_8_scalar(const uint8_t* packed, uint64_t offset, char* output) {
     const uint8_t* source = packed + static_cast<size_t>((offset >> 3) * 5);
@@ -256,6 +263,7 @@ void decode_32_avx2_bmi2(const uint8_t* packed,
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(output), decoded);
 }
 
+#if AASTORE_MAX_SIMD_BITS >= 512
 __attribute__((target("avx512f,avx512bw,avx512vl")))
 __m512i fix_stop_chars_avx512(__m512i decoded) {
     const __mmask64 match =
@@ -312,12 +320,13 @@ void decode_64_avx512_vbmi2(const uint8_t* packed,
     decoded = _mm512_or_si512(decoded, _mm512_set1_epi8(0x40));
     _mm512_storeu_si512(output, fix_stop_chars_avx512(decoded));
 }
-
+#endif
 #endif
 
 DecodeKernel detect_kernel() {
 #if AASTORE_X86_SIMD && (defined(__GNUC__) || defined(__clang__))
     __builtin_cpu_init();
+#if AASTORE_MAX_SIMD_BITS >= 512
     if (__builtin_cpu_supports("avx512f") &&
         __builtin_cpu_supports("avx512bw") &&
         __builtin_cpu_supports("avx512vl") &&
@@ -325,6 +334,7 @@ DecodeKernel detect_kernel() {
         __builtin_cpu_supports("avx512vbmi2")) {
         return DecodeKernel::Avx512Vbmi2;
     }
+#endif
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("bmi2")) {
         return DecodeKernel::Avx2Bmi2;
     }
@@ -375,8 +385,9 @@ void decode_packed_5bit_range(const uint8_t* packed,
         output[position] = code_to_char(code_at(packed, offset + position));
         ++position;
     }
-    const DecodeKernel selected = kernel();
 #if AASTORE_X86_SIMD && (defined(__GNUC__) || defined(__clang__))
+    const DecodeKernel selected = kernel();
+#if AASTORE_MAX_SIMD_BITS >= 512
     if (selected == DecodeKernel::Avx512Vbmi2) {
         while (position + 64 <= length) {
             decode_64_avx512_vbmi2(packed, offset + position,
@@ -393,7 +404,9 @@ void decode_packed_5bit_range(const uint8_t* packed,
                                    output + position);
             position += 16;
         }
-    } else if (selected == DecodeKernel::Avx2Bmi2) {
+    } else
+#endif
+    if (selected == DecodeKernel::Avx2Bmi2) {
         while (position + 32 <= length) {
             decode_32_avx2_bmi2(packed, offset + position,
                                 output + position);
