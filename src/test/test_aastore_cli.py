@@ -190,7 +190,7 @@ def main():
                 command[command.index('--aastore') + 1] == '1'
                 for command in commands))
             check('direct_' + label + '_defaults',
-                  'io_backend=io_uring threads=1 merge_gap=4096 max_range=16384' in log)
+                  'io_backend=auto threads=1 merge_gap=4096 max_range=16384' in log)
     check('existing_store_not_rebuilt', packed.stat().st_mtime_ns == before)
 
     missing = root / 'missing_store'

@@ -82,8 +82,10 @@ Use `-DNATIVE_ARCH=0` when building for distribution. MMseqs2's AVX2 baseline
 requires AVX2, FMA and CMPXCHG16B; RabbitAAStore's AVX2 decoder additionally uses
 BMI2. Its AVX-512 decoder uses AVX512F, AVX512BW, AVX512VL, AVX512VBMI and
 AVX512VBMI2. The scalar package retains MMseqs2's baseline SSE2 implementation.
-These CPU packages do not include CUDA or MPI. Nonresident RabbitAAStore sequence
-access in this integration requires Linux io_uring to be available to the process.
+These CPU packages do not include CUDA or MPI. Current source builds automatically
+fall back to `pread` when `io_uring` is unavailable, independently of the SIMD
+profile. The published v0.1.0 packages predate this fallback and require `io_uring`
+for nonresident sequence reads.
 
 ## Automatic workflows
 
@@ -331,8 +333,11 @@ reserve above.
 
 Enable the adapter with `--aastore` and set compute threads with the native
 `--threads` option. Storage mode and prefix size follow the memory policy
-above. The adapter uses `io_uring`, eight preload threads, and the RabbitAAStore
-library's default range-merging limits: 4 KiB gaps, 16 KiB normal ranges,
+above. The adapter sets `ReadOptions::io_backend` to `Auto`, preferring `io_uring`
+and falling back to `pread` when `io_uring` is unavailable. The startup log reports
+this selection policy as `io_backend=auto`; header-only reads use `pread`.
+The adapter uses eight preload threads and the RabbitAAStore library's default
+range-merging limits: 4 KiB gaps, 16 KiB normal ranges,
 and 1 MiB exact ranges. These settings are not separate command-line or
 environment-variable options. The standalone RabbitAAStore library retains its
 own `StoreOptions` and `ReadOptions` APIs.
@@ -372,7 +377,9 @@ python3 src/test/test_aastore_createdb_records.py \
 ```
 
 The unit test covers memory budgeting, all three storage modes, both I/O
-backends, ID mapping, and output-arena reuse. The integration test compares
+backends, ID mapping, and output-arena reuse. It also checks `Auto` fallback to
+`pread` in isolated child processes where `io_uring_setup` returns `ENOSYS` or
+`EPERM`, simulating an unavailable or restricted backend. The integration test compares
 native and automatically configured RabbitAAStore results for gapped and ungapped
 Linclust with one and four compute threads, using the automatic sequence-only
 adapter for an existing native database. It also covers direct `Alignment` over a

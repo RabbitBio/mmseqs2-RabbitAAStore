@@ -3,6 +3,7 @@
 #include "Parameters.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <filesystem>
@@ -14,6 +15,13 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 const char* binary_name = "test_aastore_reader";
 DEFAULT_PARAMETER_SINGLETON_INIT
@@ -165,6 +173,71 @@ void check_batch(
     }
 }
 
+void check_auto_io_fallback(const std::string& database,
+                            const std::vector<std::string>& source,
+                            int setupError) {
+    // Restrict only a fresh child, before any reader has created a retained ring.
+    std::cout.flush();
+    std::cerr.flush();
+    const pid_t child = ::fork();
+    if (child < 0) throw std::runtime_error("cannot fork Auto I/O fallback test");
+    if (child == 0) {
+        try {
+            sock_filter filter[] = {
+                BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_io_uring_setup, 0, 1),
+                BPF_STMT(BPF_RET | BPF_K,
+                         SECCOMP_RET_ERRNO | static_cast<unsigned int>(setupError)),
+                BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+            };
+            sock_fprog program = {
+                static_cast<unsigned short>(sizeof(filter) / sizeof(filter[0])), filter};
+            if (::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 ||
+                ::prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) != 0) {
+                throw std::runtime_error("cannot restrict io_uring in fallback test");
+            }
+            if (::syscall(SYS_io_uring_setup, 0, nullptr) != -1 || errno != setupError) {
+                throw std::runtime_error("io_uring setup was not restricted");
+            }
+            for (const bool scoring : {false, true}) {
+                AAStoreTargetReader reader;
+                const auto reserve = std::numeric_limits<uint64_t>::max();
+                const bool opened = scoring
+                    ? reader.openForScoring(database, 1, reserve, true)
+                    : reader.openForDatabase(database, 1, reserve, true);
+                if (!opened || reader.fullMemory()) {
+                    throw std::runtime_error("fallback test did not open a disk-backed reader");
+                }
+                AAStoreTargetReader::ThreadBatch batch;
+                batch.ids = {4, 2, 4, 0};
+                reader.fetch_into(batch, 1);
+                if (batch.sequences.fetched.stats.io_uring ||
+                    batch.sequences.fetched.stats.read_bytes == 0) {
+                    throw std::runtime_error("Auto I/O did not fall back to disk reads via pread");
+                }
+                for (const auto id : batch.ids) {
+                    std::string_view sequence;
+                    if (!batch.sequences.view(id, sequence) || sequence != source[id]) {
+                        throw std::runtime_error("Auto I/O fallback returned a wrong sequence");
+                    }
+                }
+            }
+            ::_exit(0);
+        } catch (const std::exception& error) {
+            std::cerr << "Auto I/O fallback: " << error.what() << '\n';
+            ::_exit(1);
+        }
+    }
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = ::waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        throw std::runtime_error("Auto I/O fallback test failed");
+    }
+}
+
 void check_scoring_views(const std::filesystem::path& directory,
                          const std::string& store,
                          const std::string& database,
@@ -311,11 +384,14 @@ int main() {
             throw std::runtime_error(
                 "RabbitAAStore database association was not preserved");
         }
+        check_auto_io_fallback(database, source, ENOSYS);
+        check_auto_io_fallback(database, source, EPERM);
         check_scoring_views(directory, store, database, source);
 
         const std::vector<uint32_t> keys{4, 2, 5, 0, 3, 1};
         for (const auto backend :
-             {aastore::IoBackend::Pread, aastore::IoBackend::IoUring}) {
+             {aastore::IoBackend::Pread, aastore::IoBackend::IoUring,
+              aastore::IoBackend::Auto}) {
             for (const auto mode :
                  {aastore::StorageMode::NoMemory,
                   aastore::StorageMode::PartialMemory}) {
@@ -432,7 +508,7 @@ int main() {
         std::filesystem::remove_all(directory);
         std::cout
             << "RabbitAAStore sequence/records memory budgets, association, random batches, "
-               "ID views, pread/io_uring, and FullMemory direct reads: passed\n";
+               "ID views, pread/io_uring, Auto I/O fallback, and FullMemory direct reads: passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what()
                   << "; fixture retained at " << directory << '\n';

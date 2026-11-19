@@ -44,9 +44,11 @@ cd mmseqs2-rabbitaastore-v0.1.0-linux-x86_64-avx2
 The example uses four threads and creates `example-output/`. To run it again,
 provide a new output directory: `./run_example.sh example-output-2`.
 
-Disk-based RabbitAAStore sequence retrieval requires a Linux kernel and process
-permissions that allow `io_uring`. The Linclust integration does not automatically
-fall back to `pread`. The small example may fit entirely in memory.
+The published v0.1.0 packages require `io_uring` for nonresident sequence reads.
+Source builds from this branch use `Auto`: they prefer `io_uring` and fall back
+to `pread` when it is unavailable. This fallback is not included in the v0.1.0
+packages. The small example may fit entirely in memory and does not check disk
+I/O support.
 
 ### Build from source
 
@@ -104,8 +106,10 @@ The integration automatically calculates the sequence preload budget when it
 opens RabbitAAStore, using available memory and reserving space for indexes,
 candidate data, working buffers, and a safety margin. Depending on the budget,
 it preloads all encoded sequences, a prefix, or none. Nonresident sequences are
-retrieved through batched `io_uring` reads. The selected preload size stays fixed until
-the database is closed. Details are in the [memory policy](AASTORE_LINCLUST.md#memory-policy).
+retrieved through batched reads. Current source builds use `Auto` I/O selection,
+preferring `io_uring` and falling back to `pread` if `io_uring` is unavailable.
+The selected preload size stays fixed until the database is closed. Details are
+in the [memory policy](AASTORE_LINCLUST.md#memory-policy).
 
 | Option | Purpose |
 | --- | --- |

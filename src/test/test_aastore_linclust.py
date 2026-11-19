@@ -132,7 +132,7 @@ def main():
                 if 'RabbitAAStore rescorediagonal:' not in log:
                     raise AssertionError(
                         label + ' did not use RabbitAAStore in rescorediagonal')
-                if 'io_backend=io_uring' not in log:
+                if 'io_backend=auto' not in log:
                     raise AssertionError(
                         label + ' did not use the default I/O backend')
                 if alignment_mode != 'ungapped' and (

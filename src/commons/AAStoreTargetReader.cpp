@@ -749,11 +749,11 @@ bool AAStoreTargetReader::openAssociated(
 
     readOptions_ = aastore::ReadOptions{};
     readOptions_.threads = 1;
-    readOptions_.io_backend = aastore::IoBackend::IoUring;
+    readOptions_.io_backend = aastore::IoBackend::Auto;
 
     Debug(Debug::INFO)
         << "RabbitAAStore target enabled: " << path
-        << " io_backend=" << (headersOnly ? "pread" : "io_uring")
+        << " io_backend=" << (headersOnly ? "pread" : "auto")
         << " threads=1"
         << " merge_gap=" << readOptions_.merge_gap_bytes
         << " max_range=" << readOptions_.max_merged_range_bytes
