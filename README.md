@@ -1,206 +1,144 @@
-# MMseqs2: ultra fast and sensitive sequence search and clustering suite
+# MMseqs2 with RabbitAAStore
 
-## MMseqs2 With RabbitAAStore
+This repository integrates [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore)
+into Linclust based on [MMseqs2 release 18](https://github.com/soedinglab/MMseqs2/tree/18-8cc5c).
+It combines compact protein sequence storage with automatic memory preloading
+and batched disk reads for clustering large sequence collections.
 
-Prebuilt Linux x86_64 packages are available from this fork's
-[Releases](https://github.com/RabbitBio/mmseqs2-RabbitAAStore/releases).
-The AVX-512 and AVX2 packages use MMseqs2's AVX2 implementation and different
-RabbitAAStore SIMD limits. The scalar package uses scalar RabbitAAStore kernels
-with MMseqs2's SSE2 implementation; it does not require AVX2. Each package includes
-a small FASTA example, a runnable example script and CPU requirements. SHA256
-checksums are provided alongside the downloads.
-
-This fork bundles RabbitAAStore. On Linux with `liburing` development files installed,
-use the usual source build commands:
-
-```bash
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j8
-cd ..
-./build/src/mmseqs easy-linclust input.fasta clusters tmp --threads 64 --aastore
-```
-
-`createdb --aastore` builds sequences, names and descriptions in the final native
-ID order (including shuffle), without creating a separate native `_h` database.
-The native sequence file and clustering algorithms are retained. RabbitAAStore
-alignment and rescoring use RabbitAAStore metadata without loading the native sequence
-index; native k-mer matching and other database stages keep their usual indexes.
-`easy-linclust` and `easy-cluster` use the text columns for TSV and call
-`batch_get_records(All)` to write representative and complete FASTA files directly.
-New record stores certify their RabbitAAStore files, so these exports also work
-without native sequence payloads, sequence indexes or headers. Cluster/result
-indexes remain native. An existing V1 record certificate needs its original
-native sequence index once for automatic upgrade; later exports use RabbitAAStore
-file identities only.
-The direct command is `aastoreexportfasta`; `--representative-only 1` selects
-representatives for that export and does not change clustering. `createdb`,
-`linclust` and `cluster` also accept `--aastore`. For an existing native database,
-automatic preparation adds sequence storage only; build from FASTA with
-`createdb --aastore` to include the text columns required for direct FASTA export.
-Nonresident scoring retains complete-query candidate batches of approximately
-64 MiB. See
-[RabbitAAStore integration](AASTORE_LINCLUST.md) for requirements and tests.
-The upstream prebuilt binaries listed below do not include this option.
-Without `--aastore`, sequence reads always use native MMseqs2, even when a
-RabbitAAStore is associated. Memory configuration is automatic; the adapter has
-no RabbitAAStore-specific environment variables.
-`--aastore-index-mode mmap|read` selects how RabbitAAStore sequence and text indexes
-are loaded. The default `mmap` uses reclaimable file mappings; `read` loads
-the complete indexes into Store-owned buffers. This option is forwarded through
-RabbitAAStore workflows and leaves sequence/text data storage selection unchanged.
-
-MMseqs2 (Many-against-Many sequence searching) is a software suite to search and cluster huge protein and nucleotide sequence sets. MMseqs2 is free and open source software implemented in C++ for Linux, MacOS, and (as beta version, via cygwin) Windows. The software is designed to run on multiple cores and servers and exhibits very good scalability. MMseqs2 can run 10000 times faster than BLAST. At 100 times its speed it achieves almost the same sensitivity. It can perform profile searches with the same sensitivity as PSI-BLAST at over 400 times its speed.
-
-##  Publications
-
-[Steinegger M and Soeding J. MMseqs2 enables sensitive protein sequence searching for the analysis of massive data sets. Nature Biotechnology, doi: 10.1038/nbt.3988 (2017)](https://www.nature.com/articles/nbt.3988).
-
-[Steinegger M and Soeding J. Clustering huge protein sequence sets in linear time. Nature Communications, doi: 10.1038/s41467-018-04964-5 (2018)](https://www.nature.com/articles/s41467-018-04964-5).
-
-[Mirdita M, Steinegger M and Soeding J. MMseqs2 desktop and local web server app for fast, interactive sequence searches. Bioinformatics, doi: 10.1093/bioinformatics/bty1057 (2019)](https://academic.oup.com/bioinformatics/article/35/16/2856/5280135).
-
-[Mirdita M, Steinegger M, Breitwieser F, Soding J, Levy Karin E: Fast and sensitive taxonomic assignment to metagenomic contigs. Bioinformatics, doi: 10.1093/bioinformatics/btab184 (2021)](https://doi.org/10.1093/bioinformatics/btab184).
-
-[Kallenborn F, Chacon A, Hundt C, Sirelkhatim H, Didi K, Cha S, Dallago C, Mirdita M, Schmidt B, Steinegger M: GPU-accelerated homology search with MMseqs2. bioRxiv, doi: 10.1101/2024.11.13.623350 (2024)](https://www.biorxiv.org/content/10.1101/2024.11.13.623350v1)
-
-[![BioConda Install](https://img.shields.io/conda/dn/bioconda/mmseqs2.svg?style=flag&label=BioConda%20install)](https://anaconda.org/bioconda/mmseqs2) [![Github All Releases](https://img.shields.io/github/downloads/soedinglab/mmseqs2/total.svg)](https://github.com/soedinglab/mmseqs2/releases/latest) [![Biocontainer Pulls](https://img.shields.io/endpoint?url=https%3A%2F%2Fmmseqs.com%2Fbiocontainer.php%3Fcontainer%3Dmmseqs2)](https://biocontainers.pro/#/tools/mmseqs2) [![Build Status](https://dev.azure.com/themartinsteinegger/mmseqs2/_apis/build/status/soedinglab.MMseqs2?branchName=master)](https://dev.azure.com/themartinsteinegger/mmseqs2/_build/latest?definitionId=2&branchName=master)
-
-<p align="center"><img src="https://raw.githubusercontent.com/soedinglab/mmseqs2/master/.github/mmseqs2_logo.png" height="256" /></p>
-
-
-## Documentation
-The MMseqs2 user guide is available in our [GitHub Wiki](https://github.com/soedinglab/mmseqs2/wiki) or as a [PDF file](https://mmseqs.com/latest/userguide.pdf) (Thanks to [pandoc](https://github.com/jgm/pandoc)!). The wiki also contains [tutorials](https://github.com/soedinglab/MMseqs2/wiki/Tutorials) to learn how to use MMseqs2 with real data. For questions please open an issue on [GitHub](https://github.com/soedinglab/MMseqs2/issues).
-Keep posted about MMseqs2 updates by following [Martin](https://bsky.app/profile/martinsteinegger.bsky.social) and [Milot](https://bsky.app/profile/milot.bsky.social).
+RabbitAAStore supplies query and target sequences during diagonal rescoring,
+alignment, and realignment, and supplies sequence names, descriptions, and
+sequences for TSV and FASTA export. Linclust's k-mer candidate generation,
+alignment scoring, filtering criteria, and clustering algorithm are preserved.
 
 ## Installation
-MMseqs2 can be used by [compiling from source](https://github.com/soedinglab/MMseqs2/wiki#installation), downloading a statically compiled binary at [mmseqs.com/latest](https://mmseqs.com/latest), using [Homebrew](https://github.com/Homebrew/brew), [conda](https://github.com/conda-forge/miniforge) or [Docker](https://github.com/moby/moby).
-     
-    # install by brew
-    brew install mmseqs2
-    # install via conda
-    conda install -c conda-forge -c bioconda mmseqs2
-    # install docker
-    docker pull ghcr.io/soedinglab/mmseqs2
-    # MMseqs2-GPU mostly-static AVX2 build requiring glibc >= 2.29 and nvidia driver >=525.60.13 (see below)
-    wget https://mmseqs.com/latest/mmseqs-linux-gpu.tar.gz; tar xvfz mmseqs-linux-gpu.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
-    # static build with AVX2 (fastest)
-    wget https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz; tar xvfz mmseqs-linux-avx2.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
-    # static build with SSE4.1
-    wget https://mmseqs.com/latest/mmseqs-linux-sse41.tar.gz; tar xvfz mmseqs-linux-sse41.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
-    # static build with SSE2 (slowest, for very old systems)
-    wget https://mmseqs.com/latest/mmseqs-linux-sse2.tar.gz; tar xvfz mmseqs-linux-sse2.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
-    # macOS (universal, works on Apple Silicon and Intel Macs)
-    wget https://mmseqs.com/latest/mmseqs-osx-universal.tar.gz; tar xvfz mmseqs-osx-universal.tar.gz; export PATH=$(pwd)/mmseqs/bin/:$PATH
 
-MMseqs2 requires an AMD or Intel 64-bit system (check with `uname -a | grep x86_64`). We recommend using a system with at least the SSE4.1 instruction set (check by executing `cat /proc/cpuinfo | grep sse4_1` on Linux or `sysctl -a | grep machdep.cpu.features | grep SSE4.1` on MacOS). The AVX2 version is faster than SSE4.1, check if AVX2 is supported by executing `cat /proc/cpuinfo | grep avx2` on Linux and `sysctl -a | grep machdep.cpu.leaf7_features | grep AVX2` on MacOS. A SSE2 version is also available for very old systems. MMseqs2 also works on ARM64 systems and on PPC64LE systems with POWER8 ISA or newer. MMseqs2-GPU requires the support of CUDA-enabled GPUs of the Turing generation or newer.
+### Prebuilt binaries
 
-> [!NOTE]
-> We recently added support for GPU-accelerated protein sequence and profile searches. This requires an NVIDIA GPU of the Ampere generation or newer for full speed, however, also works at reduced speed for Turing-generation GPUs. The bioconda- and precompiled binaries will not work on older GPU generations (e.g. Volta or Pascal).
-> Check the [wiki](https://github.com/soedinglab/MMseqs2/wiki#compile-from-source-for-linux-with-gpu-support) for instructions on how to get started.
+Download a Linux x86-64 package from this repository's
+[Releases](https://github.com/RabbitBio/mmseqs2-RabbitAAStore/releases).
+Each package contains `bin/mmseqs`, a small protein FASTA, and `run_example.sh`.
+The binaries are statically linked; no compiler, Python, or separate
+RabbitAAStore or liburing installation is needed.
 
-MMseqs2 comes with a bash command and parameter auto completion, which can be activated by adding the following to your $HOME/.bash_profile:
+| Package | RabbitAAStore kernels | CPU requirements |
+| --- | --- | --- |
+| AVX-512 | AVX-512 enabled | AVX2, FMA, CMPXCHG16B, BMI2, and AVX-512 F/BW/VL/VBMI/VBMI2 |
+| AVX2 | AVX2/BMI2; AVX-512 disabled | AVX2, FMA, CMPXCHG16B, and BMI2 |
+| Scalar | Scalar encoding, decoding, and FASTA scanning | x86-64 with SSE2 |
 
-<pre>
-if [ -f /<b>Path to MMseqs2</b>/util/bash-completion.sh ]; then
-    source /<b>Path to MMseqs2</b>/util/bash-completion.sh
-fi
-</pre>
-         
-## Getting started
-We provide `easy` workflows to cluster, search and assign taxonomy. These `easy` workflows are a shorthand to deal directly with FASTA/FASTQ files as input and output. MMseqs2 provides many modules to transform, filter, execute external programs and search. However, these modules use the MMseqs2 database formats, instead of the FASTA/FASTQ format. For maximum flexibility, we recommend using MMseqs2 workflows and modules directly. Please read more about this in the [documentation](https://github.com/soedinglab/mmseqs2/wiki).
+The scalar designation applies to RabbitAAStore; MMseqs2 uses its SSE2
+implementation in that package. The two vector packages use MMseqs2's AVX2
+implementation.
 
-### Cluster
+For example, download the AVX2 package, verify its checksum, and run the included example:
 
-For clustering, MMseqs2 `easy-cluster` and `easy-linclust` are available.
+```bash
+curl -fLO https://github.com/RabbitBio/mmseqs2-RabbitAAStore/releases/download/rabbitaastore-v0.1.0/mmseqs2-rabbitaastore-v0.1.0-linux-x86_64-avx2.tar.gz
+curl -fLO https://github.com/RabbitBio/mmseqs2-RabbitAAStore/releases/download/rabbitaastore-v0.1.0/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf mmseqs2-rabbitaastore-v0.1.0-linux-x86_64-avx2.tar.gz
+cd mmseqs2-rabbitaastore-v0.1.0-linux-x86_64-avx2
+./run_example.sh
+```
 
-`easy-cluster` by default clusters the entries of a FASTA/FASTQ file using a cascaded clustering algorithm.
-        
-    mmseqs easy-cluster examples/DB.fasta clusterRes tmp --min-seq-id 0.5 -c 0.8 --cov-mode 1
-        
-`easy-linclust` clusters the entries of a FASTA/FASTQ file. The runtime scales linearly with input size. This mode is recommended for huge datasets.
-                
-    mmseqs easy-linclust examples/DB.fasta clusterRes tmp
-                
-Read more about the [clustering format](https://github.com/soedinglab/mmseqs2/wiki#clustering-format) in our user guide.
-                
-Please adjust the [clustering criteria](https://github.com/soedinglab/MMseqs2/wiki#clustering-criteria) and check if temporary directory provides enough free space. For disk space requirements, see the user guide.
+The example uses four threads and creates `example-output/`. To run it again,
+provide a new output directory: `./run_example.sh example-output-2`.
 
-### Search
-         
-The `easy-search` workflow searches directly with a FASTA/FASTQ files against either another FASTA/FASTQ file or an already existing MMseqs2 database.
-        
-    mmseqs easy-search examples/QUERY.fasta examples/DB.fasta alnRes.m8 tmp
+Disk-based RabbitAAStore sequence retrieval requires a Linux kernel and process
+permissions that allow `io_uring`. The Linclust integration does not automatically
+fall back to `pread`. The small example may fit entirely in memory.
 
- 
-It is also possible to pre-compute the index for the target database. This reduces overhead when searching repeatedly against the same database.
+### Build from source
 
-    mmseqs createdb examples/DB.fasta targetDB
-    mmseqs createindex targetDB tmp
-    mmseqs easy-search examples/QUERY.fasta targetDB alnRes.m8 tmp
+Use Linux with a C++17 compiler supporting OpenMP, CMake 3.16 or newer, and
+liburing development files. Install zlib and bzip2 development files to enable
+compressed input support. RabbitAAStore sources are included in `lib/aastore`.
 
-To perform searches using GPU acceleration, you can add the `--gpu` flag to `easy-search` (see [GPU-accelerated search](https://github.com/soedinglab/MMseqs2/wiki#gpu-accelerated-search)). For frequently searched databases, you can precompute a GPU-compatible database using makepaddedseqdb, which can also be used for CPU-based searches. By default, MMseqs2 uses all visible GPUs; you can adjust this behavior using the `CUDA_VISIBLE_DEVICES` environment variable.
+```bash
+git clone --branch rabbitaastore-release18 https://github.com/RabbitBio/mmseqs2-RabbitAAStore.git
+cd mmseqs2-RabbitAAStore
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target mmseqs -j 4
+```
 
-    mmseqs createdb examples/DB.fasta targetDB
-    mmseqs makepaddedseqdb targetDB targetDB_padded
-    mmseqs easy-search examples/QUERY.fasta targetDB_padded alnRes.m8 tmp --gpu 1
-        
-The `databases` workflow provides download and setup procedures for many public reference databases, such as the Uniref, NR, NT, PFAM and many more (see [Downloading databases](https://github.com/soedinglab/mmseqs2/wiki#downloading-databases)). For example, to download and search against a database containing the Swiss-Prot reference proteins run: 
+The executable is `./build/src/mmseqs`. The default source build targets the
+build machine's CPU. For explicit SIMD profiles and portable builds, see
+[build configuration](AASTORE_LINCLUST.md#simd-profiles-for-prebuilt-binaries).
 
-    mmseqs databases UniProtKB/Swiss-Prot swissprot tmp
-    mmseqs easy-search examples/QUERY.fasta swissprot alnRes.m8 tmp
-        
-The speed and sensitivity of the `search` can be adjusted with `-s` parameter and should be adapted based on your use case (see [setting sensitivity -s parameter](https://github.com/soedinglab/mmseqs2/wiki#set-sensitivity--s-parameter)). A very fast search would use a sensitivity of `-s 1.0`, while a very sensitive search would use a sensitivity of up to `-s 7.0`. A detailed guide how to speed up searches is [here](https://github.com/soedinglab/MMseqs2/wiki#how-to-control-the-speed-of-the-search).
+## Run Linclust with RabbitAAStore
 
-The output can be customized with the `--format-output` option e.g. `--format-output "query,target,qaln,taln"` returns the query and target accession and the pairwise alignments in tab separated format. You can choose many different [output columns](https://github.com/soedinglab/mmseqs2/wiki#custom-alignment-format-with-convertalis).
+From an extracted binary package, cluster a protein FASTA with:
 
-:exclamation: `easy-search` in default computes the sequence identity by dividing the number of identical residues by the alignment length (`numIdentical/alnLen`). However, `search` [estimates](https://github.com/soedinglab/MMseqs2/wiki#how-does-mmseqs2-compute-the-sequence-identity) the identity in default. To output real sequence identity use `--alignment-mode 3` or `-a`.
+```bash
+./bin/mmseqs easy-linclust proteins.fasta clusters tmp \
+  --threads 64 --min-seq-id 0.9 -c 0.8 --cluster-mode 3 --aastore 1
+```
 
-### Taxonomy
-The `easy-taxonomy` workflow can be used to assign sequences taxonomical labels. It performs a search against a sequence database with taxonomy information (seqTaxDb), chooses the most representative sets of aligned target sequences according to different strategies (according to `--lca-mode`) and computes the lowest common ancestor among those.
+For a source build, use `./build/src/mmseqs` in place of `./bin/mmseqs`.
+Adjust the thread count and clustering thresholds for your dataset and machine.
+The command constructs the database, clusters the sequences, and exports:
 
-    mmseqs createdb examples/DB.fasta targetDB
-    mmseqs createtaxdb targetDB tmp
-    mmseqs createindex targetDB tmp
-    mmseqs easy-taxonomy examples/QUERY.fasta targetDB alnRes tmp
+| Output | Contents |
+| --- | --- |
+| `clusters_cluster.tsv` | Representative and member names, one pair per line. |
+| `clusters_rep_seq.fasta` | Cluster representative sequences. |
+| `clusters_all_seqs.fasta` | Clustered sequences grouped by representative. |
 
-By default, `createtaxdb` assigns a Uniprot accession to a taxonomical identifier to every sequence and downloads the NCBI taxonomy. We also support [BLAST](https://github.com/soedinglab/MMseqs2/wiki#create-a-sequence-database-with-taxonomic-information-from-an-existing-blast-database), [SILVA](https://github.com/soedinglab/MMseqs2/wiki#create-a-sequence-database-with-taxonomic-information-for-silva) or [custom taxonomical](https://github.com/soedinglab/MMseqs2/wiki#manually-annotate-a-sequence-database-with-taxonomic-information) databases. Many common taxonomic reference databases can be easily downloaded and set up by the [`databases` workflow](https://github.com/soedinglab/mmseqs2/wiki#downloading-databases).
+RabbitAAStore is enabled explicitly with `--aastore 1`; the shorter `--aastore`
+form is also accepted. `--aastore 0` selects native MMseqs2 sequence access.
 
-Read more about the [taxonomy format](https://github.com/soedinglab/MMseqs2/wiki#taxonomy-format) and the [classification](https://github.com/soedinglab/MMseqs2/wiki#taxonomy-assignment-using-mmseqs-taxonomy) in our user guide.
+To retain a database for reuse, run database construction and clustering separately:
 
-### Supported search modes
+```bash
+./bin/mmseqs createdb proteins.fasta target --threads 64 --aastore 1
+./bin/mmseqs linclust target clusters tmp \
+  --threads 64 --min-seq-id 0.9 -c 0.8 --cluster-mode 3 --aastore 1
+```
 
-MMseqs2 provides many additional search modes:
- * Iterative sequences-profile searches (like PSI-BLAST) with the `--num-iterations` parameter
- * [Translated searches](https://github.com/soedinglab/MMseqs2/wiki#translated-sequence-searching) of nucleotides against proteins (blastx), proteins against nucleotides (tblastn) or nucleotide against nucleotide (tblastx)
- * [Iterative increasing sensitivity searches](https://github.com/soedinglab/MMseqs2/wiki#how-to-find-the-best-hit-the-fastest-way) to find only the best hits faster
- * [Taxonomic assignment](https://github.com/soedinglab/MMseqs2/wiki#taxonomy-assignment-using-mmseqs-taxonomy) using 2bLCA or LCA
- * Fast ungapped alignment searches to find [very similar sequence matches](https://github.com/soedinglab/MMseqs2/wiki#mapping-very-similar-sequences-using-mmseqs-map)
- * Very fast and sensitive searches against [profile databases such as the PFAM](https://github.com/soedinglab/MMseqs2/wiki#how-to-create-a-target-profile-database-from-pfam)
- * [Reciprocal best hits search](https://github.com/soedinglab/MMseqs2/wiki#reciprocal-best-hit-using-mmseqs-rbh)
- * [Web search API and user interface](https://github.com/soedinglab/MMseqs2-App)
+Here `linclust` produces a cluster database. Export commands and the supported
+`easy-cluster` workflow are described in the [integration guide](AASTORE_LINCLUST.md).
 
-Many modes can also be combined. You can, for example, do a translated nucleotide against protein profile search.
+## Memory and access configuration
 
-### Memory requirements
-MMseqs2 minimum memory requirements for `cluster` or `linclust` is 1 byte per sequence residue, `search` needs 1 byte per target residue. Sequence databases can be compressed using the `--compress` flag, DNA sequences can be reduced by a factor of `~3.5` and proteins by `~1.7`.
-   
-MMseqs2 checks the available system memory and automatically divides the target database in parts that fit into memory. Splitting the database will increase the runtime slightly. It is possible to control the memory usage using `--split-memory-limit`.
+The integration automatically calculates the sequence preload budget when it
+opens RabbitAAStore, using available memory and reserving space for indexes,
+candidate data, working buffers, and a safety margin. Depending on the budget,
+it preloads all encoded sequences, a prefix, or none. Nonresident sequences are
+retrieved through batched `io_uring` reads. The selected preload size stays fixed until
+the database is closed. Details are in the [memory policy](AASTORE_LINCLUST.md#memory-policy).
 
-### How to run MMseqs2 on multiple servers using MPI
-MMseqs2 can run on multiple cores and servers using OpenMP and Message Passing Interface (MPI).
-MPI assigns database splits to each compute node, which are then computed with multiple cores (OpenMP).
+| Option | Purpose |
+| --- | --- |
+| `--aastore 1` | Build or reuse RabbitAAStore and enable it for supported commands. |
+| `--threads N` | Set the compute thread count. RabbitAAStore preloading uses a separate budget of eight threads. |
+| `--aastore-index-mode mmap` | Access sequence and text indexes through memory mappings; the default. |
+| `--aastore-index-mode read` | Load complete sequence and text indexes into allocated memory. |
 
-Make sure that MMseqs2 was compiled with MPI by using the `-DHAVE_MPI=1` flag (`cmake -DHAVE_MPI=1 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=. ..`). Our precompiled static version of MMseqs2 cannot use MPI. The version string of MMseqs2 will have a `-MPI` suffix, if it was built successfully with MPI support.
+Sequence preloading is automatic in this integration; it has no separate
+`preload_bytes` command-line option. Index loading is independent of sequence
+preloading.
 
-To search with multiple servers, call the `search` or `cluster` workflow with the MPI command exported in the RUNNER environment variable. The databases and temporary folder have to be shared between all nodes (e.g. through NFS):
+`createdb --aastore 1` writes `target.aastore` alongside the native sequence
+database, with encoded sequences, names, descriptions, and their indexes.
+The complete workflow still uses the native sequence database for k-mer
+matching and native databases for candidates and clustering results. Retain
+these files together when reusing a database. Supported inputs are protein
+sequences; nucleotide and GPU sequence databases are not supported by this integration.
 
-    RUNNER="mpirun -pernode -np 42" mmseqs search queryDB targetDB resultDB tmp
+## Documentation and support
 
-## Contributors
+- [Integration guide](AASTORE_LINCLUST.md): database reuse, export commands, memory budgeting, and tests.
+- [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore): standalone C++ and Python library.
+- [MMseqs2 documentation](https://github.com/soedinglab/MMseqs2/wiki): general clustering parameters and upstream functionality.
+- [Issue tracker](https://github.com/RabbitBio/mmseqs2-RabbitAAStore/issues): questions and problems with this integration.
 
-MMseqs2 exists thanks to all the people who contribute. 
-<a href="https://github.com/soedinglab/mmseqs2/graphs/contributors">
-  <img src="https://contributors-img.firebaseapp.com/image?repo=soedinglab/mmseqs2" />
-</a>
+## References and licenses
+
+This integration builds on MMseqs2 and Linclust:
+
+- Steinegger M and Söding J. *MMseqs2 enables sensitive protein sequence searching for the analysis of massive data sets.* Nature Biotechnology (2017). [doi:10.1038/nbt.3988](https://doi.org/10.1038/nbt.3988).
+- Steinegger M and Söding J. *Clustering huge protein sequence sets in linear time.* Nature Communications (2018). [doi:10.1038/s41467-018-04964-5](https://doi.org/10.1038/s41467-018-04964-5).
+
+The [MMseqs2 license](LICENSE.md) and [RabbitAAStore license](lib/aastore/LICENSE)
+are included in the repository. Third-party license notices are retained in
+their respective library directories.
