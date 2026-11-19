@@ -20,15 +20,15 @@ Each package contains `bin/mmseqs`, a small protein FASTA, and `run_example.sh`.
 The binaries are statically linked; no compiler, Python, or separate
 RabbitAAStore or liburing installation is needed.
 
-| Package | RabbitAAStore kernels | CPU requirements |
+| Package | MMseqs2 baseline | CPU requirements |
 | --- | --- | --- |
-| AVX-512 | AVX-512 enabled | AVX2, FMA, CMPXCHG16B, BMI2, and AVX-512 F/BW/VL/VBMI/VBMI2 |
-| AVX2 | AVX2/BMI2; AVX-512 disabled | AVX2, FMA, CMPXCHG16B, and BMI2 |
-| Scalar | Scalar encoding, decoding, and FASTA scanning | x86-64 with SSE2 |
+| AVX2 (recommended) | AVX2 | x86-64 with AVX2, FMA, and CMPXCHG16B |
+| SSE2 (compatibility) | SSE2 | x86-64 with SSE2 |
 
-The scalar designation applies to RabbitAAStore; MMseqs2 uses its SSE2
-implementation in that package. The two vector packages use MMseqs2's AVX2
-implementation.
+Both packages build RabbitAAStore with `AUTO`, selecting scalar, AVX2/BMI2,
+or AVX-512 kernels at runtime according to CPU capabilities. The package name
+refers to the MMseqs2 baseline; an AVX-512-capable machine can use the AVX2 package
+and still use RabbitAAStore's AVX-512 kernels.
 
 For example, download the AVX2 package, verify its checksum, and run the included example:
 
@@ -44,11 +44,9 @@ cd mmseqs2-rabbitaastore-v0.1.0-linux-x86_64-avx2
 The example uses four threads and creates `example-output/`. To run it again,
 provide a new output directory: `./run_example.sh example-output-2`.
 
-The published v0.1.0 packages require `io_uring` for nonresident sequence reads.
-Source builds from this branch use `Auto`: they prefer `io_uring` and fall back
-to `pread` when it is unavailable. This fallback is not included in the v0.1.0
-packages. The small example may fit entirely in memory and does not check disk
-I/O support.
+Both packages use `Auto` for nonresident sequence reads: they prefer `io_uring`
+and fall back to `pread` when it is unavailable. The small example may fit
+entirely in memory and does not check disk I/O support.
 
 ### Build from source
 
@@ -106,7 +104,7 @@ The integration automatically calculates the sequence preload budget when it
 opens RabbitAAStore, using available memory and reserving space for indexes,
 candidate data, working buffers, and a safety margin. Depending on the budget,
 it preloads all encoded sequences, a prefix, or none. Nonresident sequences are
-retrieved through batched reads. Current source builds use `Auto` I/O selection,
+retrieved through batched reads. The integration uses `Auto` I/O selection,
 preferring `io_uring` and falling back to `pread` if `io_uring` is unavailable.
 The selected preload size stays fixed until the database is closed. Details are
 in the [memory policy](AASTORE_LINCLUST.md#memory-policy).

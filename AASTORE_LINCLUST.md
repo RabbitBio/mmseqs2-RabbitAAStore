@@ -72,20 +72,19 @@ compiler loop vectorization for RabbitAAStore. Runtime dispatch still checks CPU
 features within the selected limit. Database formats and sequence results do not
 depend on this setting.
 
-| Package | RabbitAAStore limit | MMseqs2 CMake setting |
+| Package | RabbitAAStore CMake setting | MMseqs2 CMake setting |
 | --- | --- | --- |
-| AVX-512 | `-DAASTORE_SIMD_LEVEL=AVX512` | `-DHAVE_AVX2=1` |
-| AVX2 | `-DAASTORE_SIMD_LEVEL=AVX2` | `-DHAVE_AVX2=1` |
-| Scalar | `-DAASTORE_SIMD_LEVEL=SCALAR` | `-DHAVE_SSE2=1` |
+| AVX2 | `-DAASTORE_SIMD_LEVEL=AUTO` | `-DHAVE_AVX2=1` |
+| SSE2 | `-DAASTORE_SIMD_LEVEL=AUTO` | `-DHAVE_SSE2=1` |
 
 Use `-DNATIVE_ARCH=0` when building for distribution. MMseqs2's AVX2 baseline
-requires AVX2, FMA and CMPXCHG16B; RabbitAAStore's AVX2 decoder additionally uses
-BMI2. Its AVX-512 decoder uses AVX512F, AVX512BW, AVX512VL, AVX512VBMI and
-AVX512VBMI2. The scalar package retains MMseqs2's baseline SSE2 implementation.
-These CPU packages do not include CUDA or MPI. Current source builds automatically
-fall back to `pread` when `io_uring` is unavailable, independently of the SIMD
-profile. The published v0.1.0 packages predate this fallback and require `io_uring`
-for nonresident sequence reads.
+requires AVX2, FMA and CMPXCHG16B. The SSE2 package retains MMseqs2's SSE2
+implementation. Both packages include the complete RabbitAAStore kernel set and
+select a supported implementation at runtime: its AVX2 decoder requires BMI2,
+and its AVX-512 decoder requires AVX512F, AVX512BW, AVX512VL, AVX512VBMI and
+AVX512VBMI2. Neither package requires these optional decoder features to start.
+These CPU packages do not include CUDA or MPI. Both automatically fall back to
+`pread` when `io_uring` is unavailable, independently of the SIMD profile.
 
 ## Automatic workflows
 
