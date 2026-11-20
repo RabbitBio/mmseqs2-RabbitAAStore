@@ -495,5 +495,5 @@ encoding and decoding, `byte_range_planner.cpp` for planning,
 access. `store.cpp`, `store_batch.cpp`, and `store_sequential.cpp` manage
 resources, random batches, and consecutive reads, respectively.
 
-See the [changelog](../CHANGELOG.md) for migration from removed interfaces and
+See the [version overview](../CHANGELOG.md) for the current feature set and
 the [release guide](releasing.md) for compatibility and release validation.

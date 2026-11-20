@@ -195,8 +195,7 @@ remains encoded, not decoded Python strings.
 A larger budget loads only `packed_bytes` bytes; use `preload_bytes=2**64 - 1`
 to request all encoded data without first querying its size. Zero selects
 `NoMemory` even for an empty database, while a positive budget selects
-`FullMemory` when there are no encoded bytes. `StoreOptions` no longer accepts
-`storage_mode` or `cache_bytes`; update callers to pass `preload_bytes`.
+`FullMemory` when there are no encoded bytes.
 
 ```python
 opening = aastore.StoreOptions(

@@ -5,8 +5,8 @@ For installation and API examples, start with the
 [documentation index](README.md).
 
 [`VERSION`](../VERSION) is the single source for the CMake project version,
-Python package version, and Python extension version. Update it when preparing
-a release and record user-visible changes in the [changelog](../CHANGELOG.md).
+Python package version, and Python extension version. The
+[version overview](../CHANGELOG.md) summarizes the current feature set.
 
 ## Compatibility
 
@@ -134,10 +134,8 @@ are disabled, while the installed SDK still receives configure/build validation.
    disables io_uring, uses pread, and repairs the wheel through auditwheel.
    A local source build can enable io_uring; that wheel may require liburing
    on the destination machine and must not be presented as a portable wheel.
-5. Review the changelog, version, license metadata, and artifact contents.
+5. Review the version overview, package version, license metadata, and artifact contents.
    The source distribution must exclude local build trees and paper assets.
-   Create release tags and publish artifacts only as an explicitly authorized
-   release action.
 
 The workflows validate and upload build artifacts. They do not publish to
 PyPI or create releases automatically.

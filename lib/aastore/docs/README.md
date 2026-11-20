@@ -15,7 +15,7 @@ and a minimal example.
 | [Examples](../examples/README.md) | Run standalone examples with the bundled 100,000-sequence FASTA. |
 | [Tests](../tests/README.md) | Build tests, select test groups, and check optional backends. |
 | [Release guide](releasing.md) | Validate builds and installed SDKs; understand platform, API, and format compatibility. |
-| [Changelog](../CHANGELOG.md) | Review changes and migrate callers of earlier APIs. |
+| [Version overview](../CHANGELOG.md) | Features of the current version. |
 
 ## API overview
 
@@ -60,5 +60,5 @@ Python signatures are declared in
 [`bindings.cpp`](../python/bindings.cpp).
 
 For database format details and implementation entry points, see the
-[C++ API guide](cpp_api.md). For changes between revisions, see the
-[changelog](../CHANGELOG.md).
+[C++ API guide](cpp_api.md). For the current feature set, see the
+[version overview](../CHANGELOG.md).

@@ -233,7 +233,7 @@ Start with the [documentation index](docs/README.md), or choose a guide:
 | [Examples](examples/README.md) | Standalone C++ and Python examples using the bundled dataset. |
 | [Tests](tests/README.md) | Build and run the regression suite. |
 | [Release guide](docs/releasing.md) | Supported configurations, SDK validation, and version compatibility. |
-| [Changelog](CHANGELOG.md) | Changes and API migration notes. |
+| [Version overview](CHANGELOG.md) | Features of the current version. |
 
 The package version is defined in [VERSION](VERSION). Package versions and
 database format versions are managed separately; an API update does not

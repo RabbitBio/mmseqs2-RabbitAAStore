@@ -1,7 +1,7 @@
 # Minimal RabbitAAStore integration for Linclust
 
-This branch uses RabbitAAStore as an optional random-access sequence and record reader.
-MMseqs2 continues to own database creation, shuffle, k-mer matching, result
+RabbitAAStore provides optional random-access sequence and record retrieval.
+MMseqs2 handles database creation, shuffle, k-mer matching, result
 databases and the native sequence payload. RabbitAAStore alignment and rescoring use
 RabbitAAStore sequence metadata without opening the native sequence `.index`.
 `createdb --aastore` captures names
@@ -43,15 +43,11 @@ cmake -S . -B build-aastore
 cmake --build build-aastore -j8
 ```
 
-The library is bundled from [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore),
-with the build-time SIMD profiles described below. Git metadata and local build
-outputs are not bundled.
-The Scan strategy and its public options/counters have been removed in sync
-with the standalone library; existing Sparse range merging is unchanged.
-Resident name and description columns likewise use Store-owned buffers
-instead of pre-touched file mappings, matching the standalone library.
+The bundled [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore) library
+supports the build-time SIMD profiles described below.
+Resident name and description columns use Store-owned buffers.
 Single and random batch sequence reads share `get`, returning `Batch`;
-caller-owned output buffers use `get_into`. The adapter keeps its reusable
+caller-owned output buffers use `get_into`. The adapter uses a reusable
 output arena and the single-string FullMemory path.
 Its build dependencies, SDK files, tests, and examples are included alongside
 the library; no external checkout is required.
@@ -78,7 +74,7 @@ depend on this setting.
 | SSE2 | `-DAASTORE_SIMD_LEVEL=AUTO` | `-DHAVE_SSE2=1` |
 
 Use `-DNATIVE_ARCH=0` when building for distribution. MMseqs2's AVX2 baseline
-requires AVX2, FMA and CMPXCHG16B. The SSE2 package retains MMseqs2's SSE2
+requires AVX2, FMA and CMPXCHG16B. The SSE2 package uses MMseqs2's SSE2
 implementation. Both packages include the complete RabbitAAStore kernel set and
 select a supported implementation at runtime: its AVX2 decoder requires BMI2,
 and its AVX-512 decoder requires AVX512F, AVX512BW, AVX512VL, AVX512VBMI and
@@ -178,15 +174,15 @@ to read an already prepared, associated store.
 `AAStoreSequenceAccess` owns each compute thread's sequence buffers and delegates
 ID lookup and size metadata to RabbitAAStore when enabled. It does not keep a native
 sequence `DBReader` in this mode. Native reads retain the original `DBReader`.
-`AAStoreQueryBatches` shares the existing candidate collector and assignment
+`AAStoreQueryBatches` shares the candidate collector and assignment
 cursor between alignment and rescoring. In nonresident modes, each worker
 claims complete queries until their candidate sequence lengths plus terminators
 reach approximately 64 MiB, then calls `get_into` once for the batch. Multiple
 small queries share a batch. Repeated candidate occurrences count toward the
 threshold; query sequences and ID bookkeeping do not.
 
-The threshold retains the previous complete-query boundary: a single query
-larger than 64 MiB is not split, so decoded memory can exceed the threshold.
+Batches contain complete queries. A single query larger than 64 MiB is not
+split, so decoded memory can exceed the threshold.
 Candidate scanning and query assignment hold one shared lock; sequence I/O
 and scoring run outside that lock. Batch views stay valid for all assigned
 queries and realignment. Early stopping keeps the native scoring rule, while
@@ -317,8 +313,7 @@ coverage selects FullMemory, at least 64 MiB selects PartialMemory, and a
 smaller budget selects NoMemory. The integration passes this selection as a
 `StoreOptions::preload_bytes` budget: zero disables sequence preloading,
 and a positive budget lets RabbitAAStore derive partial or full residency from
-the encoded sequence size. `StoreOptions` no longer accepts an explicit
-storage mode; `Store::storage_mode()` reports the resulting mode.
+the encoded sequence size. `Store::storage_mode()` reports the resulting mode.
 
 The direct `aastoreexportfasta` command uses an 8 GiB safety reserve for its
 single writer and bounded records workspace. It opens the cluster index before
