@@ -45,8 +45,7 @@ The example uses four threads and creates `example-output/`. To run it again,
 provide a new output directory: `./run_example.sh example-output-2`.
 
 Both packages use `Auto` for nonresident sequence reads: they prefer `io_uring`
-and fall back to `pread` when it is unavailable. The small example may fit
-entirely in memory and does not check disk I/O support.
+and fall back to `pread` when it is unavailable.
 
 ### Build from source
 
@@ -129,7 +128,7 @@ sequences; nucleotide and GPU sequence databases are not supported by this integ
 
 ## Documentation and support
 
-- [Integration guide](AASTORE_LINCLUST.md): database reuse, export commands, memory budgeting, and tests.
+- [Integration guide](AASTORE_LINCLUST.md): database reuse, export commands, and memory budgeting.
 - [RabbitAAStore](https://github.com/RabbitBio/RabbitAAStore): standalone C++ and Python library.
 - [MMseqs2 documentation](https://github.com/soedinglab/MMseqs2/wiki): general clustering parameters and upstream functionality.
 - [Issue tracker](https://github.com/RabbitBio/mmseqs2-RabbitAAStore/issues): questions and problems with this integration.

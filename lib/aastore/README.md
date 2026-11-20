@@ -21,8 +21,8 @@ The Python package, C++ namespace, and command-line tools use the name `aastore`
 The supported platform is Linux x86_64 with glibc and a C++17-capable GCC or Clang
 compiler. C++ builds require CMake 3.16 or later. The portable-wheel configuration
 targets standard CPython 3.9–3.13; source builds require Python 3.9 or later.
-See the [compatibility guide](docs/releasing.md#compatibility) for the validation
-scope and kernel/backend details.
+See the [compatibility guide](docs/releasing.md#compatibility) for platform and
+kernel/backend details.
 
 ### C++ library and command-line tool
 
@@ -38,12 +38,6 @@ Python is not required for a C++ build. If compatible liburing development files
 are available, CMake enables the optional `io_uring` backend; otherwise it builds
 with `pread`. To disable liburing detection, add
 `-DAASTORE_ENABLE_IO_URING=OFF` to the configure command.
-
-The default standalone build also runs small environment smoke checks. Full
-regression tests can be enabled with a separate build option. See
-[tests/README.md](tests/README.md) for test commands and
-[docs/releasing.md](docs/releasing.md#selecting-tests-and-cross-compiling) for
-build-time checks and cross-compilation.
 
 Link the installed library from your own `CMakeLists.txt`:
 
@@ -232,7 +226,7 @@ Start with the [documentation index](docs/README.md), or choose a guide:
 | [Python API guide](docs/python_api.md) | Installation, options, sequence and record access, buffer views, and lifetimes. |
 | [Examples](examples/README.md) | Standalone C++ and Python examples using the bundled dataset. |
 | [Tests](tests/README.md) | Build and run the regression suite. |
-| [Release guide](docs/releasing.md) | Supported configurations, SDK validation, and version compatibility. |
+| [Compatibility guide](docs/releasing.md) | Supported platforms, C++ ABI requirements, and database format versions. |
 | [Version overview](CHANGELOG.md) | Features of the current version. |
 
 The package version is defined in [VERSION](VERSION). Package versions and

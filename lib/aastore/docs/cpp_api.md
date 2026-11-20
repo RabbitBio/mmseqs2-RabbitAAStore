@@ -496,4 +496,4 @@ access. `store.cpp`, `store_batch.cpp`, and `store_sequential.cpp` manage
 resources, random batches, and consecutive reads, respectively.
 
 See the [version overview](../CHANGELOG.md) for the current feature set and
-the [release guide](releasing.md) for compatibility and release validation.
+the [compatibility guide](releasing.md) for platform and version requirements.

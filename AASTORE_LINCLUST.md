@@ -8,7 +8,7 @@ RabbitAAStore sequence metadata without opening the native sequence `.index`.
 and descriptions while parsing, then constructs all three RabbitAAStore fields in
 the final native ID order without a native header database.
 
-The integration has seven parts:
+The integration has six parts:
 
 1. `AAStoreTargetReader`: storage selection, memory budgeting, full-store keys
    and compact subset membership, FullMemory reads, and thread-local random batches.
@@ -20,7 +20,6 @@ The integration has seven parts:
 5. `createsubdb`: propagation of the small `.aastore.path` association.
 6. `--aastore`: automatic construction in final MMseqs ID order and workflow
    parameter forwarding.
-7. CMake wiring and focused unit/integration tests.
 
 There is no RabbitAAStore read path in `kmermatcher` or `result2flat`.
 RabbitAAStore does not replace the native MMseqs2 sequence file. Native k-mer matching,
@@ -49,14 +48,14 @@ Resident name and description columns use Store-owned buffers.
 Single and random batch sequence reads share `get`, returning `Batch`;
 caller-owned output buffers use `get_into`. The adapter uses a reusable
 output arena and the single-string FullMemory path.
-Its build dependencies, SDK files, tests, and examples are included alongside
+Its build dependencies, SDK files, and examples are included alongside
 the library; no external checkout is required.
 
 The build always uses this project's `lib/aastore` sources; no external
 checkout or prebuilt archive is selected. Linux `liburing` is required.
 The RabbitAAStore library is linked into `mmseqs`. Standalone tools are not part of
 the default build or MMseqs2 installation, but remain available as explicit
-build targets for tests or independent use.
+build targets for independent use.
 
 ### SIMD profiles for prebuilt binaries
 
@@ -335,84 +334,3 @@ range-merging limits: 4 KiB gaps, 16 KiB normal ranges,
 and 1 MiB exact ranges. These settings are not separate command-line or
 environment-variable options. The standalone RabbitAAStore library retains its
 own `StoreOptions` and `ReadOptions` APIs.
-
-## Tests
-
-```bash
-cmake --build build-aastore -j8 --target test_aastore_reader test_aastore_sequence_access aastore_build
-./build-aastore/src/test_aastore_reader
-./build-aastore/src/test_aastore_sequence_access
-
-python3 src/test/test_aastore_sequence_batches.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --workdir "$HOME/.cache/aastore-validation/sequence-batches-test"
-
-python3 src/test/test_aastore_cli.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --builder build-aastore/lib/aastore/aastore_build \
-  --workdir "$HOME/.cache/aastore-validation/cli-test"
-
-python3 src/test/test_aastore_linclust.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --workdir "$HOME/.cache/aastore-validation/linclust-test"
-
-python3 src/test/test_aastore_index_mode.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --workdir "$HOME/.cache/aastore-validation/index-mode-test"
-
-python3 src/test/test_aastore_exports.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --workdir "$HOME/.cache/aastore-validation/export-test"
-
-python3 src/test/test_aastore_createdb_records.py \
-  --mmseqs build-aastore/src/mmseqs \
-  --builder build-aastore/lib/aastore/aastore_build \
-  --workdir "$HOME/.cache/aastore-validation/createdb-records-test"
-```
-
-The unit test covers memory budgeting, all three storage modes, both I/O
-backends, ID mapping, and output-arena reuse. It also checks `Auto` fallback to
-`pread` in isolated child processes where `io_uring_setup` returns `ENOSYS` or
-`EPERM`, simulating an unavailable or restricted backend. The integration test compares
-native and automatically configured RabbitAAStore results for gapped and ungapped
-Linclust with one and four compute threads, using the automatic sequence-only
-adapter for an existing native database. It also covers direct `Alignment` over a
-reordered subset, and `createsubdb` association and membership propagation.
-Fresh main/subset scoring tests hide both native sequence indexes before running
-RabbitAAStore align/rescore with one and four threads and compare keyed result rows
-with native scoring, including realignment and alternative alignments. They
-also compare a separate native query database against a RabbitAAStore subset target
-while its native target index is hidden. They
-reject globally valid keys excluded from a subset and check that missing RabbitAAStore
-storage cannot trigger a native fallback. They also verify that
-copied, linked and moved subsets retain their index-independent scoring view,
-and removing those artifacts leaves their source intact. Native subset reuse
-checks clear old associations, while a local RabbitAAStore output is preserved when
-reuse is rejected. `--cluster-mode 3` is checked on both native clustering passes.
-
-The sequence-access test checks candidate-byte collection, repeated IDs,
-complete-query batch boundaries, concurrent query assignment, and stable batch
-views in all three storage modes. The batch-scoring integration test forces
-disk-backed reads with a sparse candidate file and compares native align/rescore
-results for multiple queries sharing a batch and a single query exceeding the
-threshold, including early stopping and realignment. It also checks that
-missing query/target IDs fail before scoring and empty inputs stay empty.
-
-The automatic CLI test compares encoded stores with the public FASTA builder
-after native sequence reads, including shuffled, unshuffled, soft, compressed and
-multiple-input databases. It compares native and RabbitAAStore workflow results,
-tests reuse/rebuild behavior and verifies easy-workflow cleanup.
-It also compares representative/all-sequence FASTA outputs and checks export
-flag propagation. Direct export tests compare FASTA records and TSV rows with
-native output for stores constructed by `createdb --aastore`, including member
-order, repeated members and representative selection. They also verify that
-all/representative FASTA and TSV outputs remain identical after removing the
-native source sequence index and all payload shards from header-free stores.
-Certificate tests cover V1 automatic upgrade, changed RabbitAAStore index identity or
-mtime, and rejection of both explicit and old single-line subset views.
-
-The records construction test compares all six column files against the
-default public FASTA builder in final ID order, and verifies header-free easy
-workflows and rebuilding an existing native database with `createdb --aastore`.
-Soft-createdb records also export all/representative FASTA and TSV with their
-native payload links and sequence index unavailable.

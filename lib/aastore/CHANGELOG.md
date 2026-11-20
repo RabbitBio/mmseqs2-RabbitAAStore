@@ -25,4 +25,4 @@ storage and random access. The C++ namespace and Python package are `aastore`.
   metadata, plus Python bindings with buffer views and type declarations.
 
 See the [documentation index](docs/README.md) for installation and API guides,
-and the [release guide](docs/releasing.md) for platform and version compatibility.
+and the [compatibility guide](docs/releasing.md) for platform and version compatibility.

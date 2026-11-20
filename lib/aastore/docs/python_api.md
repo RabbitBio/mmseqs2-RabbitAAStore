@@ -26,12 +26,10 @@ A source build requires a C++17 GCC or Clang compiler and Python development
 headers. Pip supplies the remaining build dependencies in an isolated build
 environment. NumPy is not required.
 
-The current supported platform is Linux x86_64 with 64-bit pointers,
-little-endian byte order, and glibc. The portable-wheel configuration targets
-standard CPython 3.9–3.13. The source package declares Python 3.9 or later;
-newer versions can be tried from source but are outside the current wheel
-validation scope. Other platforms, Python implementations, and special ABIs
-have not been validated.
+The supported platform is Linux x86_64 with glibc. The portable-wheel
+configuration targets standard CPython 3.9–3.13; source builds require Python
+3.9 or later. See the [compatibility guide](releasing.md#compatibility) for
+platform and ABI requirements.
 
 ### Optional io_uring backend
 
@@ -52,7 +50,7 @@ A build linked to a shared system liburing also needs a compatible runtime
 library on the destination machine. Runtime backend fallback cannot handle a
 missing shared library that prevents the Python extension from importing.
 Python wheels contain the Python package, not the C++ SDK. See the
-[release guide](releasing.md) for packaging and compatibility details.
+[compatibility guide](releasing.md) for dependency and platform requirements.
 
 ### Building the bindings with CMake
 
@@ -65,7 +63,6 @@ cmake -S . -B build-python -DAASTORE_BUILD_PYTHON=ON \
   -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')" \
   -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
 cmake --build build-python -j 8
-(cd build-python && ctest --output-on-failure)
 ```
 
 CMake 3.16 or later is supported. Versions 3.16 and 3.17 use the Python

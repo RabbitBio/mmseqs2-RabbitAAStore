@@ -13,8 +13,8 @@ and a minimal example.
 | [C++ API](cpp_api.md) | Build databases, retrieve sequences and records, reuse output buffers, and inspect statistics. |
 | [Python API](python_api.md) | Install the bindings and use options, batches, record fields, and buffer views. |
 | [Examples](../examples/README.md) | Run standalone examples with the bundled 100,000-sequence FASTA. |
-| [Tests](../tests/README.md) | Build tests, select test groups, and check optional backends. |
-| [Release guide](releasing.md) | Validate builds and installed SDKs; understand platform, API, and format compatibility. |
+| [Tests](../tests/README.md) | Build and run the test suite. |
+| [Compatibility guide](releasing.md) | Supported platforms, C++ ABI requirements, and database format versions. |
 | [Version overview](../CHANGELOG.md) | Features of the current version. |
 
 ## API overview

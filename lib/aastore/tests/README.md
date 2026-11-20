@@ -1,9 +1,7 @@
 # RabbitAAStore tests
 
-A normal standalone build runs the small environment checks registered in
-`smoke.cmake`. The full regression suite is registered in `regression.cmake`
-and is disabled by default. This directory's Makefile enables the full suite
-through the root CMake configuration.
+This directory's Makefile enables the full test suite through the root CMake
+configuration.
 
 ## Build and run
 
@@ -22,11 +20,7 @@ Executables are placed directly in `tests/`, including `./aastore_test` and
 in `tests/build/`. Override `BUILD_DIR` with an absolute path to move those
 intermediate files; executable output remains in `tests/`.
 
-This build disables automatic post-build smoke checks to avoid running them
-twice. They remain registered with CTest and run as part of `make test`. Test
-failures produce a nonzero exit status. Tests requiring host io_uring support
-report a skip when it is unavailable; compatibility tests use a private shim
-and do not require host io_uring support.
+Tests requiring host io_uring support report a skip when it is unavailable.
 
 ## Build options
 
@@ -50,14 +44,6 @@ make test PYTHON=ON \
 
 Python tests require the Python development files and pybind11.
 
-## Coverage
-
-The suite covers database construction, random and consecutive reads, text
-columns, codec boundaries, option validation, concurrency, io_uring error
-handling, installed SDK use, and CMake compatibility. Store tests can be selected
-with the `builder`, `random`, `sequential`, `text`, and `concurrency` CTest labels.
-
-CI can enable the suite directly with `-DAASTORE_BUILD_TESTS=ON`, then run
-CTest. Existing build directories retain their cached CMake settings. To disable
-the full suite in a normal build, configure explicitly with
-`-DAASTORE_BUILD_TESTS=OFF`.
+For an existing CMake build, enable the suite with
+`-DAASTORE_BUILD_TESTS=ON`, then run `ctest --output-on-failure` in the build
+directory. Set `-DAASTORE_BUILD_TESTS=OFF` to disable it again.
