@@ -94,14 +94,13 @@ if(AAStoreUring_INCLUDE_DIR AND AAStoreUring_LIBRARY)
                 }
             ]] AAStoreUring_HAS_READ)
             check_cxx_source_compiles([[
-                #include <cstdlib>
                 #include <liburing.h>
                 int main() {
                     io_uring ring = {};
                     io_uring_probe* probe = io_uring_get_probe_ring(&ring);
                     const int supported = probe
                         ? io_uring_opcode_supported(probe, IORING_OP_READV) : 0;
-                    std::free(probe);
+                    io_uring_free_probe(probe);
                     return supported;
                 }
             ]] AAStoreUring_HAS_PROBE)

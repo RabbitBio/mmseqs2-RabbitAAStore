@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -49,8 +48,9 @@ struct ReadRing {
 bool select_read_opcode(ReadRing& state, std::string& unavailable_reason) {
     state.use_readv = true;
 #if defined(AASTORE_URING_HAS_PROBE)
-    const std::unique_ptr<io_uring_probe, decltype(&std::free)> probe(
-        io_uring_get_probe_ring(&state.ring), &std::free);
+    // liburing may use its own allocator, including in no-libc builds.
+    const std::unique_ptr<io_uring_probe, decltype(&io_uring_free_probe)> probe(
+        io_uring_get_probe_ring(&state.ring), &io_uring_free_probe);
     if (!probe) return true;
 #if defined(AASTORE_URING_HAS_READ)
     if (io_uring_opcode_supported(probe.get(), IORING_OP_READ)) {

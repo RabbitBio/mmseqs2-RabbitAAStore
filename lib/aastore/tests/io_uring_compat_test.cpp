@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -12,8 +13,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -37,6 +40,8 @@ struct Configuration {
 struct Counters {
     size_t initialized = 0;
     size_t probes = 0;
+    size_t probe_allocations = 0;
+    size_t probe_frees = 0;
     size_t reads = 0;
     size_t readvs = 0;
     size_t completed = 0;
@@ -45,6 +50,13 @@ struct Counters {
 };
 Configuration configuration;
 Counters counters;
+
+// Match liburing's no-libc ownership: an interior pointer into an mmap allocation
+// must be released through io_uring_free_probe, never through the C allocator.
+struct ProbeAllocation {
+    size_t bytes;
+    alignas(std::max_align_t) io_uring_probe probe;
+};
 
 void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -63,6 +75,8 @@ void run_case(const char* name, Configuration options, Function function) {
     if (error) std::rethrow_exception(error);
     check(counters.initialized == counters.closed,
           "a simulated ring was not closed");
+    check(counters.probe_allocations == counters.probe_frees,
+          "a probe was not released through io_uring_free_probe");
     std::cout << name << " passed\n";
 }
 
@@ -265,10 +279,22 @@ void io_uring_queue_exit(io_uring* ring) {
 io_uring_probe* io_uring_get_probe_ring(io_uring*) {
     ++counters.probes;
     if (!configuration.probe_available) { errno = EINVAL; return nullptr; }
-    auto* probe = static_cast<io_uring_probe*>(std::malloc(sizeof(io_uring_probe)));
-    check(probe != nullptr, "probe allocation failed");
-    *probe = {configuration.read, configuration.readv};
-    return probe;
+    void* memory = ::mmap(nullptr, sizeof(ProbeAllocation), PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(memory != MAP_FAILED, "probe allocation failed");
+    auto* allocation = ::new (memory) ProbeAllocation{
+        sizeof(ProbeAllocation), {configuration.read, configuration.readv}};
+    ++counters.probe_allocations;
+    return &allocation->probe;
+}
+void io_uring_free_probe(io_uring_probe* probe) {
+    if (probe == nullptr) return;
+    auto* allocation = reinterpret_cast<ProbeAllocation*>(
+        reinterpret_cast<char*>(probe) - offsetof(ProbeAllocation, probe));
+    const size_t bytes = allocation->bytes;
+    check(bytes == sizeof(ProbeAllocation), "invalid probe allocation");
+    check(::munmap(allocation, bytes) == 0, "probe deallocation failed");
+    ++counters.probe_frees;
 }
 int io_uring_opcode_supported(io_uring_probe* probe, int opcode) {
     return opcode == IORING_OP_READ ? probe->read : probe->readv;

@@ -72,8 +72,8 @@ URING_READ_PROBE := '\#include <liburing.h>' \
 ifeq ($(call compile_probe,$(URING_READ_PROBE),$(URING_CFLAGS),$(URING_LIBS)),yes)
 EXAMPLE_CPPFLAGS += -DAASTORE_URING_HAS_READ=1
 endif
-URING_PROBE_PROBE := '\#include <cstdlib>' '\#include <liburing.h>' \
-	'int main() { io_uring ring = {}; io_uring_probe* probe = io_uring_get_probe_ring(&ring); const int supported = probe ? io_uring_opcode_supported(probe, IORING_OP_READV) : 0; std::free(probe); return supported; }'
+URING_PROBE_PROBE := '\#include <liburing.h>' \
+	'int main() { io_uring ring = {}; io_uring_probe* probe = io_uring_get_probe_ring(&ring); const int supported = probe ? io_uring_opcode_supported(probe, IORING_OP_READV) : 0; io_uring_free_probe(probe); return supported; }'
 ifeq ($(call compile_probe,$(URING_PROBE_PROBE),$(URING_CFLAGS),$(URING_LIBS)),yes)
 EXAMPLE_CPPFLAGS += -DAASTORE_URING_HAS_PROBE=1
 endif

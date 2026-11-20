@@ -29,6 +29,7 @@ int io_uring_queue_init_params(unsigned, io_uring*, io_uring_params*);
 void io_uring_queue_exit(io_uring*);
 #if !defined(AASTORE_TEST_LEGACY_LIBURING)
 io_uring_probe* io_uring_get_probe_ring(io_uring*);
+void io_uring_free_probe(io_uring_probe*);
 int io_uring_opcode_supported(io_uring_probe*, int);
 #endif
 io_uring_sqe* io_uring_get_sqe(io_uring*);

@@ -51,6 +51,7 @@ void io_uring_cqe_seen(io_uring*, io_uring_cqe*);
 void io_uring_prep_read(io_uring_sqe*, int, void*, unsigned,
                        unsigned long long);
 io_uring_probe* io_uring_get_probe_ring(io_uring*);
+void io_uring_free_probe(io_uring_probe*);
 int io_uring_opcode_supported(io_uring_probe*, int);
 }
 
@@ -63,13 +64,17 @@ project(AAStoreUringProbeLibraries LANGUAGES CXX)
 add_library(empty STATIC empty.cpp)
 add_library(baseline STATIC liburing.cpp)
 add_library(complete STATIC liburing.cpp)
+add_library(missing_probe_free STATIC liburing.cpp)
 target_compile_definitions(complete PRIVATE AASTORE_TEST_COMPLETE_LIBURING)
+target_compile_definitions(missing_probe_free PRIVATE
+    AASTORE_TEST_COMPLETE_LIBURING AASTORE_TEST_NO_FREE_PROBE)
 target_include_directories(baseline PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(complete PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
-set_target_properties(empty baseline complete PROPERTIES
+target_include_directories(missing_probe_free PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+set_target_properties(empty baseline complete missing_probe_free PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib")
 foreach(config IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(empty baseline complete PROPERTIES
+    set_target_properties(empty baseline complete missing_probe_free PROPERTIES
         "ARCHIVE_OUTPUT_DIRECTORY_${config}" "${CMAKE_CURRENT_BINARY_DIR}/lib")
 endforeach()
 ]=])
@@ -96,6 +101,9 @@ void io_uring_cqe_seen(io_uring*, io_uring_cqe*) { std::abort(); }
 void io_uring_prep_read(io_uring_sqe*, int, void*, unsigned,
                        unsigned long long) { std::abort(); }
 io_uring_probe* io_uring_get_probe_ring(io_uring*) { std::abort(); }
+#ifndef AASTORE_TEST_NO_FREE_PROBE
+void io_uring_free_probe(io_uring_probe*) { std::abort(); }
+#endif
 int io_uring_opcode_supported(io_uring_probe*, int) { std::abort(); }
 #endif
 }
@@ -141,7 +149,7 @@ else()
     endif()
 endif()
 foreach(capability IN ITEMS READ PROBE)
-    if(AASTORE_TEST_EXPECT_OPTIONAL)
+    if(AASTORE_TEST_EXPECT_${capability})
         if(NOT AAStoreUring_HAS_${capability})
             message(FATAL_ERROR "A linked ${capability} API was rejected")
         endif()
@@ -176,13 +184,17 @@ aastore_test_run_checked("${CMAKE_COMMAND}" --build "${library_build}" --config 
 set(toolchain "${AASTORE_TEST_BINARY_DIR}/cross-toolchain.cmake")
 file(WRITE "${toolchain}"
     "set(CMAKE_SYSTEM_NAME Linux)\nset(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)\n")
-foreach(library IN ITEMS empty baseline complete)
+foreach(library IN ITEMS empty baseline complete missing_probe_free)
     set(expected_found TRUE)
-    set(expected_optional FALSE)
+    set(expected_read FALSE)
+    set(expected_probe FALSE)
     if(library STREQUAL "empty")
         set(expected_found FALSE)
     elseif(library STREQUAL "complete")
-        set(expected_optional TRUE)
+        set(expected_read TRUE)
+        set(expected_probe TRUE)
+    elseif(library STREQUAL "missing_probe_free")
+        set(expected_read TRUE)
     endif()
     aastore_test_run_checked("${CMAKE_COMMAND}" -S "${fixture_source}/probe"
         -B "${AASTORE_TEST_BINARY_DIR}/${library}"
@@ -191,6 +203,7 @@ foreach(library IN ITEMS empty baseline complete)
         "-DAASTORE_TEST_INCLUDE_DIR=${fixture_source}"
         "-DAASTORE_TEST_LIBRARY=${library_build}/lib/lib${library}.a"
         "-DAASTORE_TEST_EXPECT_FOUND=${expected_found}"
-        "-DAASTORE_TEST_EXPECT_OPTIONAL=${expected_optional}")
+        "-DAASTORE_TEST_EXPECT_READ=${expected_read}"
+        "-DAASTORE_TEST_EXPECT_PROBE=${expected_probe}")
 endforeach()
-message(STATUS "liburing cross-compilation checks passed for all three archives")
+message(STATUS "liburing cross-compilation checks passed for all four archives")
